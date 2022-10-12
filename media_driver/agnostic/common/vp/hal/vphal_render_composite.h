@@ -339,6 +339,12 @@ public:
         PCVPHAL_RENDER_PARAMS  pcRenderParams,
         RenderpassData         *pRenderPassData);
 
+    void PrintCurbeData(MEDIA_OBJECT_KA2_STATIC_DATA *pWalkerStatic);
+
+    void PrintWalkerParas(PMHW_GPGPU_WALKER_PARAMS pWalkerParams);
+
+    void PrintSamplerParams(PMHW_SAMPLER_STATE_PARAM pSamplerParams);
+
     //!
     //! \brief    set Report data
     //! \details  set Report data for this render
@@ -743,6 +749,12 @@ protected:
         return MOS_STATUS_SUCCESS;
     }
 
+    MOS_STATUS IntermediateAllocation(PVPHAL_SURFACE &pIntermediate,
+        PMOS_INTERFACE                               pOsInterface,
+        uint32_t                                     dwTempWidth,
+        uint32_t                                     dwTempHeight,
+        PVPHAL_SURFACE                               pTarget);
+
     //!
     //! \brief    Prepare phases for composite and allocate intermediate buffer for rendering
     //! \param    [in] pcRenderParams
@@ -779,7 +791,8 @@ protected:
     //!
     bool AddCompLayer(
         PVPHAL_COMPOSITE_PARAMS     pComposite,
-        PVPHAL_SURFACE              pSource);
+        PVPHAL_SURFACE              pSource,
+        bool                        bDisableAvsSampler);
 
     //!
     //! \brief    Adds render target layer for composite
@@ -1011,6 +1024,16 @@ private:
         PRENDERHAL_SURFACE_STATE_PARAMS pSurfaceParams);
 
     //!
+    //! \brief    Decompress the Surface
+    //! \details  Decompress the interlaced Surface which is in the RC compression mode
+    //! \param    [in,out] pSource
+    //!           Pointer to Source Surface
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    MOS_STATUS DecompressInterlacedSurfInRCMode(PVPHAL_SURFACE pSource);
+
+    //!
     //! \brief    Allocate Composite BatchBuffer
     //! \details  Allocate Composite BatchBuffer, search from existing BBs for a match. If
     //!           none, allocate new BB
@@ -1085,6 +1108,15 @@ private:
     //!
     bool IsSamplerLumakeySupported(PVPHAL_SURFACE pSrc);
 
+    //!
+    //! \brief    Get intermediate surface output
+    //! \param    pOutput
+    //!           [in] Pointer to Intermediate Output Surface
+    //! \return   PVPHAL_SURFACE
+    //!           Return the chose output
+    //!
+    virtual MOS_STATUS GetIntermediateOutput(PVPHAL_SURFACE &output);
+
     // Procamp
     int32_t                         m_iMaxProcampEntries;
     int32_t                         m_iProcampVersion;
@@ -1151,8 +1183,11 @@ protected:
 
     static const int                AVS_CACHE_SIZE = 4;           //!< AVS coefficients cache size
     AvsCoeffsCache<AVS_CACHE_SIZE>  m_AvsCoeffsCache;             //!< AVS coefficients calculation is expensive, add cache to mitigate
-    VPHAL_SURFACE                   m_Intermediate;               //!< Intermediate surface (multiple phase / constriction support)
-    VPHAL_SURFACE                   m_Intermediate2;              //!< Rotation output intermediate surface
+    VPHAL_SURFACE                   m_Intermediate  = {};         //!< Intermediate surface (multiple phase / constriction support)
+    VPHAL_SURFACE                   m_Intermediate1 = {};         //!< Intermediate surface (multiple phase / constriction support)
+    VPHAL_SURFACE                   m_Intermediate2 = {};         //!< Rotation output intermediate surface
+    
+    VPHAL_SURFACE                   m_AuxiliarySyncSurface = {};  //!< This Auxiliary surface is used to sync engine workload
 
     Kdll_State                      *m_pKernelDllState = nullptr; //!< Compositing Kernel DLL/Search state
     RENDERHAL_KERNEL_PARAM          m_KernelParams = {0};

@@ -57,6 +57,11 @@ typedef enum BLT_TILE_TYPE_ENUM
    BLT_TILED_64
 }BLT_TILE_TYPE;
 
+typedef enum _MHW_BLT_ENGINE_ADDRESS_SHIFT
+{
+    MHW_BLT_ENGINE_STATE_BASE_ADDRESS_SHIFT = 6
+} MHW_BLT_ENGINE_ADDRESS_SHIFT;
+
 class mhw_blt_state
 {
 public:
@@ -490,12 +495,18 @@ public:
     //!           Pointer to Command buffer
     //! \param    [in] pFastCopyBltParam
     //!           Pointer to MHW_FAST_COPY_BLT_PARAM
+    //! \param    [in] srcOffset
+    //!           input surface's soruce offset
+    //! \param    [in] outOffset
+    //!           output surface's soruce offset
     //! \return   MOS_STATUS
     //!           MOS_STATUS_SUCCESS if success, else fail reason
     //!
     virtual MOS_STATUS AddFastCopyBlt(
         PMOS_COMMAND_BUFFER         pCmdBuffer,
-        PMHW_FAST_COPY_BLT_PARAM    pFastCopyBltParam);
+        PMHW_FAST_COPY_BLT_PARAM    pFastCopyBltParam,
+        uint32_t                    srcOffset,
+        uint32_t                    dstOffset);
 
     //!
     //! \brief    Add Block copy
@@ -532,8 +543,12 @@ public:
     //!
     virtual uint32_t GetFastTilingMode(
         BLT_TILE_TYPE              TileType);
+
+    virtual std::shared_ptr<void> GetNewBltInterface() { return nullptr; }
+
 public:
     PMOS_INTERFACE m_osInterface = nullptr;
+    std::shared_ptr<void>  m_bltItfNew    = nullptr;
 };
 
 typedef class MhwBltInterface *PMHW_BLT_INTERFACE;

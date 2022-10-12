@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2020, Intel Corporation
+* Copyright (c) 2009-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -35,6 +35,28 @@
 #include "support.h"
 #endif
 
+union FP32
+{
+    uint32_t u;
+    float f;
+    struct
+    {
+        uint32_t Mantissa : 23;
+        uint32_t Exponent : 8;
+        uint32_t Sign : 1;
+    };
+};
+
+union FP16
+{
+    uint16_t u;
+    struct
+    {
+        uint16_t Mantissa : 10;
+        uint16_t Exponent : 5;
+        uint16_t Sign : 1;
+    };
+};
 //!
 //! \brief    Performs Color Space Convert for Sample 8 bit Using Specified Coeff Matrix
 //! \details  Performs Color Space Convert from Src Color Spase to Dst Color Spase
@@ -133,7 +155,7 @@ bool VpHal_CSC(
                 break;
 
             default:
-                VPHAL_PUBLIC_ASSERTMESSAGE("Unsupported Output ColorSpace.");
+                VPHAL_PUBLIC_NORMALMESSAGE("Unsupported Output ColorSpace %d.", (uint32_t)dstCspace);
                 bResult = false;
                 break;
         }
@@ -275,7 +297,7 @@ void VpHal_GetCscMatrix(
             break;
 
         default:
-            VPHAL_PUBLIC_ASSERTMESSAGE("Unsupported Input ColorSpace for Vebox.");
+            VPHAL_PUBLIC_NORMALMESSAGE("Unsupported Input ColorSpace for Vebox %d.", (uint32_t)SrcCspace);
     }
 
     // Get the output offsets
@@ -331,7 +353,7 @@ void VpHal_GetCscMatrix(
             break;
 
         default:
-            VPHAL_PUBLIC_ASSERTMESSAGE("Unsupported Output ColorSpace for Vebox.");
+            VPHAL_PUBLIC_NORMALMESSAGE("Unsupported Output ColorSpace for Vebox %d.", (uint32_t)DstCspace);
     }
 }
 
@@ -381,7 +403,7 @@ float VpHal_Lanczos(float x, uint32_t dwNumEntries, float fLanczosT)
     return VpHal_Sinc(x) * VpHal_Sinc(x / fLanczosT);
 }
 
-bool isSyncFreeNeededForMMCSurface(PVPHAL_SURFACE pSurface, PMOS_INTERFACE pOsInterface)
+bool IsSyncFreeNeededForMMCSurface(PVPHAL_SURFACE pSurface, PMOS_INTERFACE pOsInterface)
 {
     if (nullptr == pSurface || nullptr == pOsInterface)
     {
@@ -508,7 +530,7 @@ MOS_STATUS VpHal_ReAllocateSurface(
 
     // Delete resource if already allocated
     //if free the compressed surface, need set the sync dealloc flag as 1 for sync dealloc for aux table update
-    if (isSyncFreeNeededForMMCSurface(pSurface, pOsInterface))
+    if (IsSyncFreeNeededForMMCSurface(pSurface, pOsInterface))
     {
         resFreeFlags.SynchronousDestroy = 1;
         VPHAL_PUBLIC_NORMALMESSAGE("Set SynchronousDestroy flag for compressed resource %s", pSurfaceName);
@@ -530,6 +552,10 @@ MOS_STATUS VpHal_ReAllocateSurface(
     VPHAL_PUBLIC_CHK_STATUS(VpHal_GetSurfaceInfo(pOsInterface, &Info, pSurface));
 
     *pbAllocated     = true;
+
+    MT_LOG7(MT_VP_HAL_REALLOC_SURF, MT_NORMAL, MT_VP_HAL_INTER_SURF_TYPE, pSurfaceName ? *((int64_t*)pSurfaceName) : 0,
+        MT_SURF_WIDTH, dwWidth, MT_SURF_HEIGHT, dwHeight, MT_SURF_MOS_FORMAT, Format, MT_SURF_TILE_MODE, pSurface->TileModeGMM,
+        MT_SURF_COMP_ABLE, pSurface->bCompressible, MT_SURF_COMP_MODE, pSurface->CompressionMode);
 
 finish:
     VPHAL_PUBLIC_ASSERT(eStatus == MOS_STATUS_SUCCESS);
@@ -1023,6 +1049,9 @@ uint16_t VpHal_FloatToHalfFloat(
     }
     else if (Exp == 0xff)
     {
+        // There is one accuracy issue in this fuction.
+        // If FP32 is 0x7C800001(NaN), FP16 should be 0x7C01(NaN), but this function returns 0x7C00 instead of 0x7C01.
+        // VpHal_FloatToHalfFloatA fixes this accuracy issue.
         outFloat.Exponent = 31;
     }
     else
@@ -1044,6 +1073,65 @@ uint16_t VpHal_FloatToHalfFloat(
     }
 
     return outFloat.value;
+}
+
+//! \brief    Transfer float type to half precision float type
+//! \details  Transfer float type to half precision float (16bit) type
+//! \param    [in] fInputA
+//!           input FP32 number
+//! \return   uint16_t
+//!           half precision float value in bit
+//!
+uint16_t VpHal_FloatToHalfFloatA(float fInputA)
+{
+
+    FP32 fInput        = *(FP32*)(&fInputA);
+    FP16 fOutput       = { 0 };
+
+    // Based on ISPC reference code (with minor modifications)
+    if (fInput.Exponent == 0) // Signed zero/denormal (which will underflow)
+    {
+        fOutput.Exponent = 0;
+    }
+    else if (fInput.Exponent == 255) // Inf or NaN (all exponent bits set)
+    {
+        fOutput.Exponent = 31;
+        fOutput.Mantissa = fInput.Mantissa ? 0x200 : 0; // NaN->qNaN and Inf->Inf
+    }
+    else // Normalized number
+    {
+        // Exponent unbias the single, then bias the halfp
+        int newexp = fInput.Exponent - 127 + 15;
+        if (newexp >= 31) // Overflow, return signed infinity
+        {
+            fOutput.Exponent = 31;
+        }
+        else if (newexp <= 0) // Underflow
+        {
+            if ((14 - newexp) <= 24) // Mantissa might be non-zero
+            {
+                uint32_t mant = fInput.Mantissa | 0x800000; // Hidden 1 bit
+                fOutput.Mantissa = mant >> (14 - newexp);
+                if ((mant >> (13 - newexp)) & 1) // Check for rounding
+                {
+                    fOutput.u++; // Round, might overflow into exp bit, but this is OK
+                }
+            }
+        }
+        else
+        {
+            fOutput.Exponent = newexp;
+            fOutput.Mantissa = fInput.Mantissa >> 13;
+            if (fInput.Mantissa & 0x1000) // Check for rounding
+            {
+                fOutput.u++; // Round, might overflow to inf, this is OK
+            }
+        }
+    }
+
+    fOutput.Sign = fInput.Sign;
+    uint16_t res = *(uint16_t*)(&fOutput);
+    return res;
 }
 
 MOS_SURFACE VpHal_ConvertVphalSurfaceToMosSurface(PVPHAL_SURFACE pSurface)

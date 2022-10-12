@@ -1,5 +1,5 @@
 ﻿/*
-* Copyright (c) 2018-2021, Intel Corporation
+* Copyright (c) 2018-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -35,6 +35,7 @@
 #include "vp_utils.h"
 #include "sw_filter.h"
 #include "vp_feature_caps.h"
+#include "vp_render_fc_types.h"
 
 namespace vp {
 
@@ -101,6 +102,16 @@ public:
         m_packet = packet;
     }
 
+    //!
+    //! \brief  Get current associated media Packet
+    //! \return MediaTask*
+    //!         return the media task pointer
+    //!
+    PVP_MHWINTERFACE GetMhwInterface()
+    {
+        return m_pvpMhwInterface;
+    }
+
 protected:
 
     PVP_MHWINTERFACE      m_pvpMhwInterface = nullptr;   // vp HW interfaces
@@ -109,6 +120,7 @@ protected:
 
     VpCmdPacket         * m_packet = nullptr;
 
+MEDIA_CLASS_DEFINE_END(VpFilter)
 };
 
 struct _SFC_SCALING_PARAMS
@@ -129,6 +141,11 @@ struct _SFC_SCALING_PARAMS
     uint32_t                        dwScaledRegionWidth;                        // Scaled region width
     uint32_t                        dwScaledRegionVerticalOffset;               // Scaled region vertical offset
     uint32_t                        dwScaledRegionHorizontalOffset;             // Scaled region horizontal offset
+    uint32_t                        dwTargetRectangleStartHorizontalOffset;     // Target rectangle start horizontal offset
+    uint32_t                        dwTargetRectangleEndHorizontalOffset;       // Target rectangle end horizontal offset
+    uint32_t                        dwTargetRectangleStartVerticalOffset;       // Target rectangle start vertical offset
+    uint32_t                        dwTargetRectangleEndVerticalOffset;         // Target rectangle end vertical offset
+    bool                            bRectangleEnabled;                          // Target rectangle enabled
     float                           fAVSXScalingRatio;                          // X Scaling Ratio
     float                           fAVSYScalingRatio;                          // Y Scaling Ratio
 
@@ -148,6 +165,7 @@ struct _SFC_CSC_PARAMS
     bool                            bIEFEnable;                                  // IEF Enabled
     bool                            bChromaUpSamplingEnable;                     // ChromaUpSampling
     bool                            b8tapChromafiltering;                        // Enables 8 tap filtering for Chroma Channels
+    bool                            isDitheringNeeded;                           // 0: dithering is not needed; 1: dithering is needed
     VPHAL_CSPACE                    inputColorSpace;                             // Input Color Space
     MOS_FORMAT                      inputFormat;                                 // SFC Input Format
     MOS_FORMAT                      outputFormat;                                // SFC Output Format
@@ -256,6 +274,18 @@ struct _VEBOX_CSC_PARAMS
     uint32_t                        chromaDownSamplingHorizontalCoef;            // Chroma DownSampling Horizontal Coeff
 };
 
+struct _RENDER_CSC_PARAMS
+{
+    uint32_t                        layer;
+    bool                            bCSCEnabled;                                 // CSC Enabled
+    VPHAL_CSPACE                    inputColorSpcase;                            // Input Color Space
+    VPHAL_CSPACE                    outputColorSpcase;                           // Input Color Space
+    MOS_FORMAT                      inputFormat;                                 // Input Format
+    MOS_FORMAT                      outputFormat;                                // Output Format
+    PVPHAL_ALPHA_PARAMS             alphaParams;                                 // Output Alpha Params
+    uint32_t                        inputChromaSetting;                          // Chroma setting
+};
+
 struct _VEBOX_HDR_PARAMS
 {
     uint32_t                        uiMaxDisplayLum;       //!< Maximum Display Luminance
@@ -264,6 +294,7 @@ struct _VEBOX_HDR_PARAMS
     VPHAL_CSPACE                    srcColorSpace;
     VPHAL_CSPACE                    dstColorSpace;
     MOS_FORMAT                      dstFormat;
+    HDR_STAGE                       stage;
 };
 
 using SFC_SCALING_PARAMS    = _SFC_SCALING_PARAMS;
@@ -298,10 +329,38 @@ struct _VEBOX_UPDATE_PARAMS
     VpKernelID                      kernelId;
 };
 
-using VEBOX_UPDATE_PARAMS      = _VEBOX_UPDATE_PARAMS;
-using PVEBOX_UPDATE_PARAMS     = VEBOX_UPDATE_PARAMS *;
-using VEBOX_HDR_PARAMS      = _VEBOX_HDR_PARAMS;
-using PVEBOX_HDR_PARAMS     = VEBOX_HDR_PARAMS *;
+using VEBOX_UPDATE_PARAMS                 = _VEBOX_UPDATE_PARAMS;
+using PVEBOX_UPDATE_PARAMS                = VEBOX_UPDATE_PARAMS *;
+using VEBOX_HDR_PARAMS                    = _VEBOX_HDR_PARAMS;
+using PVEBOX_HDR_PARAMS                   = VEBOX_HDR_PARAMS *;
+
+struct _RENDER_HDR_3DLUT_CAL_PARAMS
+{
+    uint32_t                        maxDisplayLum;       //!< Maximum Display Luminance
+    uint32_t                        maxContentLevelLum;  //!< Maximum Content Level Luminance
+    VPHAL_HDR_MODE                  hdrMode;
+    VpKernelID                      kernelId;
+    uint32_t                        threadWidth;
+    uint32_t                        threadHeight;
+    KERNEL_ARGS                     kernelArgs;
+};
+
+using RENDER_HDR_3DLUT_CAL_PARAMS  = _RENDER_HDR_3DLUT_CAL_PARAMS;
+using PRENDER_HDR_3DLUT_CAL_PARAMS = RENDER_HDR_3DLUT_CAL_PARAMS *;
+
+struct _RENDER_DN_HVS_CAL_PARAMS
+{
+    uint32_t                        qp;
+    uint32_t                        strength;
+    VPHAL_HVSDN_MODE                hvsMode;
+    VpKernelID                      kernelId;
+    uint32_t                        threadWidth;
+    uint32_t                        threadHeight;
+    KERNEL_ARGS                     kernelArgs;
+};
+
+using RENDER_DN_HVS_CAL_PARAMS  = _RENDER_DN_HVS_CAL_PARAMS;
+using PRENDER_DN_HVS_CAL_PARAMS = RENDER_DN_HVS_CAL_PARAMS *;
 
 struct _STATE_COPY_PARAMS
 {
@@ -409,6 +468,14 @@ struct _RENDER_DI_FMD_PARAMS
 using RENDER_DI_FMD_PARAMS  = _RENDER_DI_FMD_PARAMS;
 using PRENDER_DI_FMD_PARAMS = RENDER_DI_FMD_PARAMS *;
 
+struct _RENDER_FC_PARAMS
+{
+    VpKernelID              kernelId;
+    VP_COMPOSITE_PARAMS     compParams;
+};
+using RENDER_FC_PARAMS  = _RENDER_FC_PARAMS;
+using PRENDER_FC_PARAMS = RENDER_FC_PARAMS *;
+
 class SwFilterPipe;
 class HwFilter;
 class PacketParamFactoryBase;
@@ -428,6 +495,8 @@ public:
 
 private:
     FeatureType m_FeatureType = FeatureTypeInvalid;
+
+MEDIA_CLASS_DEFINE_END(HwFilterParameter)
 };
 
 /////////////////////////////Packet Parameters///////////////////////////////////
@@ -444,6 +513,8 @@ public:
 
 private:
     PacketParamFactoryBase *m_packetParamFactory = nullptr;
+
+MEDIA_CLASS_DEFINE_END(VpPacketParameter)
 };
 
 /////////////////////////////Policy Feature Handler//////////////////////////////
@@ -465,6 +536,8 @@ protected:
     FeatureType m_Type = FeatureTypeInvalid;
     std::vector<HwFilterParameter *> m_Pool;
     VP_HW_CAPS  &m_hwCaps;
+
+MEDIA_CLASS_DEFINE_END(PolicyFeatureHandler)
 };
 
 class PacketParamFactoryBase
@@ -476,6 +549,8 @@ public:
     void ReturnPacketParameter(VpPacketParameter *&p);
 protected:
     std::vector<VpPacketParameter *> m_Pool;
+
+MEDIA_CLASS_DEFINE_END(PacketParamFactoryBase)
 };
 
 template<class T>
@@ -517,6 +592,8 @@ public:
             return p;
         }
     }
+
+MEDIA_CLASS_DEFINE_END(PacketParamFactory)
 };
 
 struct HW_FILTER_PARAM

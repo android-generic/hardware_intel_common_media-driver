@@ -70,6 +70,8 @@ protected:
     VpPlatformInterface *m_vpPlatformInterface = nullptr;
     VpKernelSet         *m_kernelSet = nullptr;
     VP_PACKET_SHARED_CONTEXT *m_packetSharedContext = nullptr;
+
+MEDIA_CLASS_DEFINE_END(vp__PacketFactory)
 };
 
 class PacketPipe
@@ -79,7 +81,6 @@ public:
     virtual ~PacketPipe();
     MOS_STATUS Clean();
     MOS_STATUS AddPacket(HwFilter &hwFilter);
-    MOS_STATUS SwitchContext(PacketType type, MediaScalability *&scalability, MediaContext *mediaContext, bool bEnableVirtualEngine, uint8_t numVebox);
     MOS_STATUS Execute(MediaStatusReport *statusReport, MediaScalability *&scalability, MediaContext *mediaContext, bool bEnableVirtualEngine, uint8_t numVebox);
     VPHAL_OUTPUT_PIPE_MODE GetOutputPipeMode()
     {
@@ -91,6 +92,8 @@ public:
         return m_veboxFeatureInuse;
     }
 
+    static MOS_STATUS SwitchContext(PacketType type, MediaScalability *&scalability, MediaContext *mediaContext, bool bEnableVirtualEngine, uint8_t numVebox);
+
 private:
     VpCmdPacket *CreatePacket(EngineType type);
     MOS_STATUS SetOutputPipeMode(EngineType engineType);
@@ -99,6 +102,8 @@ private:
     std::vector<VpCmdPacket *> m_Pipe;
     VPHAL_OUTPUT_PIPE_MODE m_outputPipeMode = VPHAL_OUTPUT_PIPE_MODE_INVALID;
     bool m_veboxFeatureInuse = false;
+
+MEDIA_CLASS_DEFINE_END(vp__PacketPipe)
 };
 
 class PacketPipeFactory
@@ -112,6 +117,8 @@ public:
 private:
     PacketFactory &m_pPacketFactory;
     std::vector<PacketPipe *> m_Pool;
+
+MEDIA_CLASS_DEFINE_END(vp__PacketPipeFactory)
 };
 
 }

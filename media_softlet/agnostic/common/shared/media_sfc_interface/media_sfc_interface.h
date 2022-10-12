@@ -120,6 +120,10 @@ struct VDBOX_SFC_PARAMS
                                                         //!< be smaller than frame width.
         uint32_t                    height;             //!< Effective height of SFC input, which may
                                                         //!< be smaller than frame height.
+        uint32_t                    effectiveWidth;     //!< exclude right padding area on input surface,
+                                                        //!< which may be smaller than Effective width.
+        uint32_t                    effectiveHeight;    //!< exclude bottom padding area on input surface,
+                                                        //!< which may be smaller than Effective height.
         MOS_FORMAT                  format;             //!< Format of SFC input
         MEDIA_CSPACE                colorSpace;         //!< Color Space
         uint32_t                    chromaSiting;       //!< ChromaSiting
@@ -223,6 +227,7 @@ protected:
     PMOS_INTERFACE m_osInterface    = nullptr;
     MediaSfcRender *m_sfcRender     = nullptr;
     MediaMemComp   *m_mmc           = nullptr;
+MEDIA_CLASS_DEFINE_END(MediaSfcInterface)
 };
 
 #endif // __MEDIA_SFC_INTERFACE_H__

@@ -28,6 +28,7 @@
 #ifndef __MHW_VDBOX_VDENC_CMDPAR_H__
 #define __MHW_VDBOX_VDENC_CMDPAR_H__
 
+#include <functional>
 #include "mhw_vdbox_cmdpar.h"
 #include "codec_def_common.h"
 #include "codec_def_common_encode.h"
@@ -166,25 +167,31 @@ struct _MHW_PAR_T(VDENC_PIPE_MODE_SELECT)
     uint8_t wirelessSessionId        = 0;
     uint8_t tailPointerReadFrequency = 0;
     uint8_t streamingBufferConfig    = 0;
-    uint8_t quantizationPrecision    = 0;
-    uint8_t latencyTolerate          = 0;
-    __MHW_VDBOX_VDENC_WRAPPER_EXT(VDENC_PIPE_MODE_SELECT_CMDPAR_EXT);
+    uint8_t VdencPipeModeSelectPar0  = 0;
+    uint8_t VdencPipeModeSelectPar1  = 0;
+    uint8_t VdencPipeModeSelectPar2  = 0; 
+    uint8_t VdencPipeModeSelectPar3  = 0; 
+    uint8_t VdencPipeModeSelectPar4  = 0; 
+    uint8_t VdencPipeModeSelectPar5  = 0; 
+    uint8_t VdencPipeModeSelectPar6  = 0; 
+    uint8_t VdencPipeModeSelectPar7  = 0;
 };
 
 struct _MHW_PAR_T(VDENC_SRC_SURFACE_STATE)
 {
-    uint32_t          width                = 0;
-    uint32_t          height               = 0;
-    uint32_t          pitch                = 0;
-    uint32_t          uOffset              = 0;
-    uint32_t          vOffset              = 0;
-    MOS_TILE_TYPE     tileType             = MOS_TILE_X;
-    MOS_TILE_MODE_GMM tileModeGmm          = MOS_TILE_LINEAR_GMM;
-    MOS_FORMAT        format               = Format_Any;
-    bool              gmmTileEn            = false;
-    bool              colorSpaceSelection  = false;
-    bool              displayFormatSwizzle = false;
-    uint8_t           vDirection           = 0;
+    uint32_t          width                         = 0;
+    uint32_t          height                        = 0;
+    uint32_t          pitch                         = 0;
+    uint32_t          uOffset                       = 0;
+    uint32_t          vOffset                       = 0;
+    MOS_TILE_TYPE     tileType                      = MOS_TILE_X;
+    MOS_TILE_MODE_GMM tileModeGmm                   = MOS_TILE_LINEAR_GMM;
+    MOS_FORMAT        format                        = Format_Any;
+    bool              gmmTileEn                     = false;
+    bool              colorSpaceSelection           = false;
+    bool              displayFormatSwizzle          = false;
+    uint32_t          chromaDownsampleFilterControl = 0;
+    uint8_t           vDirection                    = 0;
 };
 
 struct _MHW_PAR_T(VDENC_REF_SURFACE_STATE)
@@ -244,6 +251,8 @@ struct _MHW_PAR_T(VDENC_PIPE_BUF_ADDR_STATE)
     MOS_MEMCOMP_STATE mmcStateDsStage1                  = MOS_MEMCOMP_DISABLED;
     PMOS_SURFACE      surfaceDsStage2                   = nullptr;
     MOS_MEMCOMP_STATE mmcStateDsStage2                  = MOS_MEMCOMP_DISABLED;
+    uint8_t           mmcSkipMask                       = 0;
+    bool              mmcEnabled                        = false;
     bool              lowDelayB                         = false;
     bool              isPFrame                          = false;  //only HEVC should touch this flag
     PMOS_RESOURCE     colocatedMvReadBuffer             = nullptr;
@@ -270,23 +279,44 @@ struct _MHW_PAR_T(VDENC_WEIGHTSOFFSETS_STATE)
 
 struct _MHW_PAR_T(VDENC_HEVC_VP9_TILE_SLICE_STATE)
 {
-    bool     tileEnable                 = false;
-    bool     tileRowStoreSelect         = false;
-    uint32_t tileWidth                  = 0;
-    uint32_t tileHeight                 = 0;
-    uint32_t numPipe                    = 0;
-    uint32_t tileId                     = 0;
-    uint32_t tileStartLCUX              = 0;
-    uint32_t tileStartLCUY              = 0;
-    uint32_t ctbSize                    = 0;
-    uint32_t tileStreamInOffset         = 0;
-    uint32_t tileLCUStreamOutOffset     = 0;
-    bool     cumulativeCUTileOffsetEn   = false;
-    uint32_t cumulativeCUTileOffset     = 0;
-    uint32_t log2WeightDenomLuma        = 0;
-    uint32_t log2WeightDenomChroma      = 0;
-    uint32_t hevcVp9Log2WeightDenomLuma = 0;
-    __MHW_VDBOX_VDENC_WRAPPER_EXT(VDENC_HEVC_VP9_TILE_SLICE_STATE_CMDPAR_EXT);
+    bool     tileEnable                    = false;
+    bool     tileRowStoreSelect            = false;
+    uint32_t tileWidth                     = 0;
+    uint32_t tileHeight                    = 0;
+    uint32_t numPipe                       = 0;
+    uint32_t tileId                        = 0;
+    uint32_t tileStartLCUX                 = 0;
+    uint32_t tileStartLCUY                 = 0;
+    uint32_t ctbSize                       = 0;
+    uint32_t tileStreamInOffset            = 0;
+    uint32_t tileLCUStreamOutOffset        = 0;
+    uint32_t log2WeightDenomLuma           = 0;
+    uint32_t log2WeightDenomChroma         = 0;
+    uint32_t hevcVp9Log2WeightDenomLuma    = 0;
+    uint32_t paletteModeEnable             = 0;
+    uint32_t ibcControl                    = 0;
+    uint32_t VdencHEVCVP9TileSlicePar0     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar1     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar2     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar3     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar4     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar5     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar6     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar7     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar8     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar9     = 0;
+    uint32_t VdencHEVCVP9TileSlicePar10    = 0;
+    uint32_t VdencHEVCVP9TileSlicePar11    = 0;
+    uint32_t VdencHEVCVP9TileSlicePar12    = 0;
+    uint32_t VdencHEVCVP9TileSlicePar13    = 0;
+    uint32_t VdencHEVCVP9TileSlicePar14    = 0;
+    uint32_t VdencHEVCVP9TileSlicePar15    = 0;
+    uint8_t  VdencHEVCVP9TileSlicePar16[3] = {};
+    uint32_t VdencHEVCVP9TileSlicePar17[3] = {};
+    bool     VdencHEVCVP9TileSlicePar18    = false;
+    uint32_t VdencHEVCVP9TileSlicePar19    = 0;
+    uint32_t VdencHEVCVP9TileSlicePar22    = 0;
+    uint32_t VdencHEVCVP9TileSlicePar23    = 0;
 };
 
 struct _MHW_PAR_T(VDENC_WALKER_STATE)
@@ -309,7 +339,23 @@ struct _MHW_PAR_T(VD_PIPELINE_FLUSH)
     bool flushVDENC             = false;
     bool flushMFL               = false;
     bool flushMFX               = false;
+    bool waitDoneAV1            = false;
+    bool flushAV1               = false;
     __MHW_VDBOX_VDENC_WRAPPER_EXT(VD_PIPELINE_FLUSH_CMDPAR_EXT);
+};
+
+struct _MHW_PAR_T(VDENC_AVC_SLICE_STATE)
+{
+    uint8_t roundIntra          = 0;
+    uint8_t roundIntraEnable    = 1;
+    uint8_t roundInter          = 0;
+    uint8_t roundInterEnable    = 0;
+    uint8_t log2WeightDenomLuma = 0;
+};
+
+struct _MHW_PAR_T(VDENC_AVC_IMG_STATE)
+{
+    __MHW_VDBOX_VDENC_WRAPPER_EXT(VDENC_AVC_IMG_STATE_CMDPAR_EXT);
 };
 
 struct _MHW_PAR_T(VDENC_CMD1)
@@ -409,26 +455,64 @@ struct _MHW_PAR_T(VDENC_CMD1)
     uint8_t  vdencCmd1Par92    = 0;
     uint8_t  vdencCmd1Par93    = 0;
     uint8_t  vdencCmd1Par94    = 0;
+    uint8_t  vdencCmd1Par95    = 0;
 };
 
 struct _MHW_PAR_T(VDENC_CMD2)
 {
+    uint32_t width                            = 0;
+    uint32_t height                           = 0;
+    bool     constrainedIntraPred             = false;
+    uint8_t  pictureType                      = 0;
+    bool     av1IdentityTransform             = false;
+    bool     temporalMvp                      = false;
+    bool     collocatedFromL0                 = false;
+    uint8_t  longTermReferenceFlagsL0         = 0;
+    uint8_t  longTermReferenceFlagsL1         = 0;
+    bool     transformSkip                    = false;
+    int8_t   pocL0Ref0                        = 1;
+    int8_t   pocL1Ref0                        = -1;
+    int8_t   pocL0Ref1                        = 2;
+    int8_t   pocL1Ref1                        = -2;
+    int8_t   pocL0Ref2                        = 3;
+    int8_t   pocL1Ref2                        = -3;
+    int8_t   pocL0Ref3                        = 4;
+    int8_t   pocL1Ref3                        = -4;
+    bool     roiStreamIn                      = false;
+    uint8_t  numRefL0                         = 0;
+    uint8_t  numRefL1                         = 0;
+    bool     segmentation                     = false;
+    bool     segmentationTemporal             = false;
+    bool     tiling                           = false;
+    bool     vdencStreamIn                    = false;
+    bool     pakOnlyMultiPass                 = false;
+    uint8_t  frameIdxL0Ref0                   = 0;
+    uint8_t  frameIdxL0Ref1                   = 0;
+    uint8_t  frameIdxL0Ref2                   = 0;
+    uint8_t  frameIdxL1Ref0                   = 0;
+    uint8_t  minQp                            = 0;
+    uint8_t  maxQp                            = 255;
+    bool     temporalMvEnableForIntegerSearch = false;
+    uint16_t intraRefreshPos                  = 0;
+    uint8_t  intraRefreshMbSizeMinus1         = 1;
+    uint8_t  intraRefreshMode                 = 0;
+    bool     intraRefresh                     = false;
+    uint8_t  qpAdjustmentForRollingI          = 0;
+    uint8_t  qpForSegs[8]                     = {};
+    bool     vp9DynamicSlice                  = false;
+    uint8_t  qpPrimeYDc                       = 0;
+    uint8_t  qpPrimeYAc                       = 0;
+    uint32_t intraRefreshBoundary[3]          = {};
+    uint8_t  av1RefId[2][4]                   = {{1, 1, 1, 1}, {1, 1, 1, 1}};
+
+    std::vector<std::function<MOS_STATUS(uint32_t*)>> extSettings;
+
     __MHW_VDBOX_VDENC_WRAPPER_EXT(VDENC_CMD2_CMDPAR_EXT);
 };
 
 struct _MHW_PAR_T(VDENC_CMD3)
 {
     __MHW_VDBOX_VDENC_WRAPPER_EXT(VDENC_CMD3_CMDPAR_EXT);
-};
-
-struct _MHW_PAR_T(VDENC_CMD4)
-{
-    __MHW_VDBOX_VDENC_WRAPPER_EXT(VDENC_CMD4_CMDPAR_EXT);
-};
-
-struct _MHW_PAR_T(VDENC_CMD5)
-{
-    __MHW_VDBOX_VDENC_WRAPPER_EXT(VDENC_CMD5_CMDPAR_EXT);
 };
 }  // namespace vdenc
 }  // namespace vdbox

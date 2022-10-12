@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2020, Intel Corporation
+* Copyright (c) 2011-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -377,15 +377,18 @@ public:
     virtual MOS_STATUS ValidateNumReferences( PCODECHAL_ENCODE_AVC_VALIDATE_NUM_REFS_PARAMS params);
 
     //!
-    //! \brief    Get inter rounding value.
+    //! \brief    Set intra/inter rounding value.
     //!
-    //! \param    [in] sliceState
+    //! \param    [in] rounding
+    //!           Pointer to CODECHAL_ENCODE_AVC_ROUNDING_PARAMS
+    //!
+    //! \param    [out] sliceState
     //!           Pointer to MHW_VDBOX_AVC_SLICE_STATE
     //!
     //! \return   MOS_STATUS
     //!           MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    virtual MOS_STATUS GetInterRounding( PMHW_VDBOX_AVC_SLICE_STATE sliceState);
+    virtual MOS_STATUS SetRounding(PCODECHAL_ENCODE_AVC_ROUNDING_PARAMS param, PMHW_VDBOX_AVC_SLICE_STATE sliceState);
 
     //!
     //! \brief    Get Skip Bias Adjustment.
@@ -610,7 +613,7 @@ public:
     //! \return   bool
     //!           true if native ROI, otherwise false
     //!
-    bool ProcessRoiDeltaQp();
+    virtual bool ProcessRoiDeltaQp();
 
     //!
     //! \brief    Add store HUC_ERROR_STATUS register command in the command buffer
@@ -770,6 +773,17 @@ public:
     //!
     virtual MOS_STATUS ExecuteMeKernel();
 
+    virtual bool IsMBBRCControlEnabled();
+
+    MOS_STATUS SetCommonSliceState(
+        CODECHAL_ENCODE_AVC_PACK_SLC_HEADER_PARAMS &packSlcHeaderParams,
+        MHW_VDBOX_AVC_SLICE_STATE &                 sliceState);
+
+    MOS_STATUS SetSliceState(
+        CODECHAL_ENCODE_AVC_PACK_SLC_HEADER_PARAMS &packSlcHeaderParams,
+        MHW_VDBOX_AVC_SLICE_STATE &                 sliceState,
+        uint16_t                                    slcIdx);
+
 protected:
     // AvcGeneraicState functions
     //!
@@ -913,7 +927,9 @@ protected:
 
     virtual uint32_t GetBRCCostantDataSize() { return sizeof(AVCVdencBRCCostantData); }
 
-    virtual MOS_STATUS FillHucConstData(uint8_t *data);
+    virtual uint32_t GetVdencBRCImgStateBufferSize() { return MOS_ALIGN_CEIL(m_hwInterface->m_vdencBrcImgStateBufferSize, CODECHAL_PAGE_SIZE); }
+
+    virtual MOS_STATUS FillHucConstData(uint8_t *data, uint8_t picType);
 
     //!
     //! \brief    Prepare HW MetaData buffer
@@ -931,6 +947,47 @@ protected:
         PMOS_RESOURCE       presMetadataBuffer,
         PMOS_RESOURCE       presSliceSizeStreamoutBuffer,
         PMOS_COMMAND_BUFFER cmdBuffer) override;
+
+    virtual MOS_STATUS AddVdencBrcImgBuffer(
+        PMOS_RESOURCE             vdencBrcImgBuffer,
+        PMHW_VDBOX_AVC_IMG_PARAMS params);
+
+    //!
+    //! \brief    Report Slice Size to MetaData buffer
+    //! \details  Report Slice Size to MetaData buffer.
+    //! \param    [in] presMetadataBuffer
+    //!               Pointer to allocated HW MetaData buffer
+    //!           [in] cmdBuffer
+    //!               Pointer to primary cmd buffer
+    //!           [in] slcCount
+    //!               Current slice count
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS ReportSliceSizeMetaData(
+        PMOS_RESOURCE presMetadataBuffer,
+        PMOS_COMMAND_BUFFER cmdBuffer,
+        uint32_t slcCount);
+
+    //!
+    //! \brief    Add MI_STORE commands in the command buffer to update DMEM from other HW output buffer if needed
+    //!
+    //! \param    [in] cmdBuffer
+    //!           Pointer to the command buffer
+    //!
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS AddMiStoreForHWOutputToHucDmem(PMOS_COMMAND_BUFFER cmdBuffer)
+    {
+        // Nothing to do
+        // HW store PAK statistics directly to DMEM resource
+        return MOS_STATUS_SUCCESS;
+    }
+
+    virtual void SetBufferToStorePakStatistics();
+
+    virtual uint32_t GetCurrConstDataBufIdx();
 
 protected:
     bool                                        m_vdencSinglePassEnable = false;   //!< Enable VDEnc single pass
@@ -986,7 +1043,7 @@ protected:
     MOS_RESOURCE m_resVdencBrcUpdateDmemBuffer[CODECHAL_ENCODE_RECYCLED_BUFFER_NUM][CODECHAL_VDENC_BRC_NUM_OF_PASSES];  //!< Brc Update DMEM Buffer Array.
     MOS_RESOURCE m_resVdencBrcInitDmemBuffer[CODECHAL_ENCODE_RECYCLED_BUFFER_NUM];                                      //!< Brc Init DMEM Buffer Array.
     MOS_RESOURCE m_resVdencBrcImageStatesReadBuffer[CODECHAL_ENCODE_RECYCLED_BUFFER_NUM];                               //!< Read-only VDENC+PAK IMG STATE buffer.
-    MOS_RESOURCE m_resVdencBrcConstDataBuffer;                                                                          //!< BRC Const Data Buffer.
+    MOS_RESOURCE m_resVdencBrcConstDataBuffer[CODECHAL_ENCODE_VDENC_BRC_CONST_BUFFER_NUM];                              //!< BRC Const Data Buffer for each frame type.
     MOS_RESOURCE m_resVdencBrcHistoryBuffer;                                                                            //!< BRC History Buffer.
     MOS_RESOURCE m_resVdencBrcRoiBuffer[CODECHAL_ENCODE_RECYCLED_BUFFER_NUM];                                           //!< BRC ROI Buffer.
     MOS_RESOURCE m_resVdencBrcDbgBuffer;                                                                                //!< BRC Debug Buffer.
@@ -1125,6 +1182,8 @@ protected:
     virtual MOS_STATUS DumpEncodeImgStats(
         PMOS_COMMAND_BUFFER        cmdbuffer);
 
+    virtual uint32_t GetPakVDEncPassDumpSize();
+
     virtual MOS_STATUS DumpSeqParFile() override;
     virtual MOS_STATUS DumpFrameParFile() override;
 
@@ -1229,7 +1288,9 @@ MOS_STATUS CodechalVdencAvcState::SetDmemHuCBrcInitResetImpl(CODECHAL_VDENC_AVC_
     hucVDEncBrcInitDmem->INIT_ProfileLevelMaxFrame_U32 = profileLevelMaxFrame;
     if (avcSeqParams->GopRefDist && (avcSeqParams->GopPicSize > 0))
     {
+        // Their ratio is used in BRC kernel to detect mini GOP structure. Have to be multiple.
         hucVDEncBrcInitDmem->INIT_GopP_U16 = (avcSeqParams->GopPicSize - 1) / avcSeqParams->GopRefDist;
+        hucVDEncBrcInitDmem->INIT_GopB_U16 = (avcSeqParams->GopRefDist - 1) * hucVDEncBrcInitDmem->INIT_GopP_U16;
     }
 
     if (m_minMaxQpControlEnabled)
@@ -1284,7 +1345,7 @@ MOS_STATUS CodechalVdencAvcState::SetDmemHuCBrcInitResetImpl(CODECHAL_VDENC_AVC_
     hucVDEncBrcInitDmem->INIT_InitQPIP = (uint8_t)initQP;
 
     // MBBRC control
-    if (m_mbBrcEnabled || m_avcPicParam->bNativeROI)
+    if (IsMBBRCControlEnabled())
     {
         hucVDEncBrcInitDmem->INIT_MbQpCtrl_U8 = 1;
         MOS_SecureMemcpy(hucVDEncBrcInitDmem->INIT_DistQPDelta_I8, 4 * sizeof(int8_t), (void*)BRC_INIT_DistQPDelta_I8, 4 * sizeof(int8_t));

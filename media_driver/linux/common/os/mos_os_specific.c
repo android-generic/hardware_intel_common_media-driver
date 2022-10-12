@@ -31,7 +31,6 @@
 #include <unistd.h>
 #include <dlfcn.h>
 #include "hwinfo_linux.h"
-#include "media_fourcc.h"
 #include <stdlib.h>
 
 #include "mos_graphicsresource.h"
@@ -720,7 +719,7 @@ static int16_t ShmAttachedNumber(int32_t shmid)
 
 static MOS_STATUS LockSemaphore(int32_t semid)
 {
-    struct sembuf op[2];
+    struct sembuf op[2] = {};
     op[0].sem_num = 0; // wait for [0] to be 0
     op[0].sem_op  = 0;
     op[0].sem_flg = 0;
@@ -809,7 +808,7 @@ MOS_STATUS CreateIPC(PMOS_CONTEXT pOsContext)
             break;
         }
 
-        MOS_Sleep(1); //wait and retry
+        MosUtilities::MosSleep(1);  //wait and retry
     }
 
     LockSemaphore(pOsContext->semid);
@@ -1189,8 +1188,6 @@ void Linux_Destroy(
         }
         mos_gem_context_destroy(pOsContext->intel_context);
     }
-
-    pOsContext->GmmFuncs.pfnDeleteClientContext(pOsContext->pGmmClientContext);
 
     MOS_FreeMemAndSetNull(pOsContext);
 }
@@ -1931,7 +1928,6 @@ MOS_STATUS Mos_DestroyInterface(PMOS_INTERFACE pOsInterface)
             mos_gem_context_destroy(perStreamParameters->intel_context);
             perStreamParameters->intel_context = nullptr;
         }
-        perStreamParameters->GmmFuncs.pfnDeleteClientContext(perStreamParameters->pGmmClientContext);
         MOS_FreeMemAndSetNull(perStreamParameters);
         streamState->perStreamParameters = nullptr;
     }
@@ -2513,7 +2509,9 @@ MOS_STATUS Mos_Specific_AllocateResource(
     {
         case MOS_TILE_Y:
             tileformat_linux               = I915_TILING_Y;
-            if (pParams->bIsCompressible && MEDIA_IS_SKU(&pOsInterface->pOsContext->SkuTable, FtrE2ECompression))
+            if (pParams->bIsCompressible                                             && 
+                MEDIA_IS_SKU(&pOsInterface->pOsContext->SkuTable, FtrE2ECompression) &&
+                MEDIA_IS_SKU(&pOsInterface->pOsContext->SkuTable, FtrCompressibleSurfaceDefault))
             {
                 GmmParams.Flags.Gpu.MMC = true;
                 GmmParams.Flags.Info.MediaCompressed = 1;
@@ -3297,6 +3295,23 @@ MOS_STATUS Mos_Specific_DecompResource(
 
 finish:
     return eStatus;
+}
+
+//!
+//! \brief    Set auxiliary sync resource
+//! \details  Set auxiliary resource to sync with decompression
+//! \param    PMOS_INTERFACE pOsInterface
+//!           [in] pointer to OS Interface structure
+//! \param    PMOS_RESOURCE pOsResource
+//!           [in/out] Resource object
+//! \return   MOS_STATUS
+//!           MOS_STATUS_SUCCESS if successful
+//!
+MOS_STATUS Mos_Specific_SetDecompSyncRes(
+    PMOS_INTERFACE pOsInterface,
+    PMOS_RESOURCE  syncResource)
+{
+    return MOS_STATUS_SUCCESS;
 }
 
 //!
@@ -4274,320 +4289,8 @@ MOS_STATUS Mos_Specific_SubmitCommandBuffer(
 
         return (gpuContext->SubmitCommandBuffer(pOsInterface, pCmdBuffer, bNullRendering));
     }
-
-    PMOS_CONTEXT            pOsContext;
-    PMOS_RESOURCE           pResource;
-    PMOS_OS_GPU_CONTEXT     pOsGpuContext;
-    MOS_GPU_CONTEXT         GpuContext;
-    MOS_GPU_NODE            GpuNode;
-    uint32_t                PatchIndex, CmdBufferSize;
-    MOS_STATUS              eStatus;
-    PPATCHLOCATIONLIST      pPatchList,pCurrentPatch;
-    MOS_LINUX_BO            *alloc_bo, *cmd_bo;
-#if (_DEBUG || _RELEASE_INTERNAL)
-    MOS_LINUX_BO            *bad_cmd_bo;
-    MOS_LINUX_BO            *nop_cmd_bo;
-    uint32_t                dwComponentTag;
-    uint32_t                dwCallType;
-#endif // (_DEBUG || _RELEASE_INTERNAL)
-    uint32_t                dwBatchBufferEndCmd;
-    uint32_t                            cpCmdProps;
-    int32_t                             PerfData;
-    uint32_t                            ExecFlag;
-    drm_clip_rect_t                     *cliprects;
-    int32_t                             num_cliprects;
-    int32_t                             DR4, ret;
-    uint64_t                            boOffset;
-
-    boOffset = 0;
-    eStatus  = MOS_STATUS_SUCCESS;
-    ret      = 0;
-
-    MOS_OS_CHK_NULL(pOsInterface);
-    MOS_OS_CHK_NULL(pOsInterface->osCpInterface);
-
-    pOsContext = pOsInterface->pOsContext;
-    MOS_OS_CHK_NULL(pOsContext);
-
-    GpuContext = pOsInterface->CurrentGpuContextOrdinal;
-    GpuNode    = OSKMGetGpuNode(GpuContext);
-    ExecFlag   = GpuNode;
-
-    MOS_OS_CHK_NULL(pOsContext->OsGpuContext);
-    pOsGpuContext = &pOsContext->OsGpuContext[GpuContext];
-    MOS_OS_CHK_NULL(pOsGpuContext);
-
-    pPatchList = pOsGpuContext->pPatchLocationList;
-    MOS_OS_CHK_NULL(pPatchList);
-
-    // Allocate command buffer from video memory
-    CmdBufferSize = (pCmdBuffer->pCmdPtr - pCmdBuffer->pCmdBase)*4;// pCmdBuffer->OsResource.iPitch;        // ??? Not 100% sure about this ...
-
-    // Command buffer object DRM pointer
-    pOsGpuContext->bCBFlushed = true;
-    cmd_bo = pCmdBuffer->OsResource.bo;
-
-    // Now, the patching will be done, based on the patch list.
-    for (PatchIndex = 0; PatchIndex <  pOsGpuContext->uiCurrentNumPatchLocations; PatchIndex++)
-    {
-        pCurrentPatch   = &pPatchList[PatchIndex];
-        MOS_OS_CHK_NULL(pCurrentPatch);
-
-        // This is the resource for which patching will be done
-        pResource       = (PMOS_RESOURCE)pOsGpuContext->pAllocationList[pCurrentPatch->AllocationIndex].hAllocation;
-        MOS_OS_CHK_NULL(pResource);
-
-        // For now, we'll assume the system memory's DRM bo pointer
-        // is NULL.  If nullptr is detected, then the resource has been
-        // placed inside the command buffer's indirect state area.
-        // We'll simply set alloc_bo to the command buffer's bo pointer.
-        MOS_OS_ASSERT(pResource->bo);
-
-        alloc_bo = (pResource->bo) ? pResource->bo : cmd_bo;
-
-        MOS_OS_CHK_STATUS(pOsInterface->osCpInterface->PermeatePatchForHM(
-            cmd_bo->virt,
-            pCurrentPatch,
-            pResource));
-
-        boOffset = alloc_bo->offset64;
-        if (alloc_bo != cmd_bo)
-        {
-          auto item_ctx = pOsContext->contextOffsetList.begin();
-          for (; item_ctx != pOsContext->contextOffsetList.end(); item_ctx++)
-          {
-             if (item_ctx->intel_context == pOsContext->intel_context && item_ctx->target_bo == alloc_bo)
-             {
-               boOffset = item_ctx->offset64;
-               break;
-             }
-          }
-        }
-        if (pOsContext->bUse64BitRelocs)
-        {
-            *((uint64_t*)((uint8_t*)cmd_bo->virt + pCurrentPatch->PatchOffset)) =
-                    boOffset + pCurrentPatch->AllocationOffset;
-        }
-        else
-        {
-            *((uint32_t*)((uint8_t*)cmd_bo->virt + pCurrentPatch->PatchOffset)) =
-                    boOffset + pCurrentPatch->AllocationOffset;
-        }
-
-        if(mos_gem_bo_is_softpin(alloc_bo))
-        {
-            if (alloc_bo != cmd_bo)
-            {
-                ret = mos_bo_add_softpin_target(cmd_bo, alloc_bo, pCurrentPatch->uiWriteOperation);
-            }
-        }
-        else
-        {
-            // This call will patch the command buffer with the offsets of the indirect state region of the command buffer
-            ret = mos_bo_emit_reloc2(
-                        cmd_bo,                                                              // Command buffer
-                        pCurrentPatch->PatchOffset,                                          // Offset in the command buffer
-                        alloc_bo,                                                            // Allocation object for which the patch will be made.
-                        pCurrentPatch->AllocationOffset,                                     // Offset to the indirect state
-                        I915_GEM_DOMAIN_RENDER,                                              // Read domain
-                        (pCurrentPatch->uiWriteOperation) ? I915_GEM_DOMAIN_RENDER : 0x0,   // Write domain
-                        boOffset);
-        }
-
-        if (ret != 0)
-        {
-            MOS_OS_ASSERTMESSAGE("Error patching alloc_bo = 0x%x, cmd_bo = 0x%x.",
-                               (uintptr_t)alloc_bo,(uintptr_t)cmd_bo);
-            eStatus = MOS_STATUS_UNKNOWN;
-            goto finish;
-        }
-    }
-
-    //Add Batch buffer End Command
-    dwBatchBufferEndCmd = MI_BATCHBUFFER_END;
-    if (MOS_FAILED(Mos_AddCommand(
-                       pCmdBuffer,
-                       &dwBatchBufferEndCmd,
-                       sizeof(uint32_t))))
-    {
-        MOS_OS_ASSERTMESSAGE("Inserting BB_END failed!");
-        eStatus = MOS_STATUS_UNKNOWN;
-        goto finish;
-    }
-
-    // Now, we can unmap the video command buffer, since we don't need CPU access anymore.
-    mos_bo_unmap(cmd_bo);
-
-    if(pOsContext->pPerfData != nullptr)
-    {
-        PerfData = *(int32_t *)(pOsContext->pPerfData);
-    }
-    else
-    {
-        PerfData = 0;
-    }
-
-    cliprects = nullptr;
-    num_cliprects = 0;
-    DR4 = pOsContext->uEnablePerfTag ? PerfData : 0;
-
-    //Since CB2 command is not supported, remove it and set cliprects to nullprt as default.
-    if (GpuNode != I915_EXEC_RENDER)
-    {
-        if (pOsContext->bKMDHasVCS2)
-        {
-            if (pOsContext->bPerCmdBufferBalancing && pOsInterface->pfnGetVdboxNodeId)
-            {
-                ExecFlag = Mos_Specific_GetVcsExecFlag(pOsInterface, pCmdBuffer, GpuNode);
-            }
-            else if (GpuNode == MOS_GPU_NODE_VIDEO)
-            {
-                ExecFlag = I915_EXEC_BSD | I915_EXEC_BSD_RING1;
-            }
-            else if (GpuNode == MOS_GPU_NODE_VIDEO2)
-            {
-                ExecFlag = I915_EXEC_BSD | I915_EXEC_BSD_RING2;
-            }
-        }
-        else
-        {
-            ExecFlag = I915_EXEC_BSD | I915_EXEC_BSD_RING1;
-        }
-    }
-
-#if (_DEBUG || _RELEASE_INTERNAL)
-    // trigger GPU HANG if bTriggerCodecHang is set
-    bad_cmd_bo = nullptr;
-
-    //dwComponentTag 3: decode,5: vpp,6: encode
-    //dwCallType     8: PAK(CODECHAL_ENCODE_PERFTAG_CALL_PAK_ENGINE)
-    //               34:PREENC
-    //               5: VPP
-    dwComponentTag = (PerfData & 0xF000) >> 12;
-    dwCallType     = (PerfData & 0xFC) >> 2;
-
-    if(pOsInterface->bTriggerCodecHang &&
-        (dwComponentTag == 3 || (dwComponentTag == 6 && dwCallType == 8) ||
-        (dwComponentTag == 6 && dwCallType == 34) ||
-        (dwComponentTag == 5 && dwCallType == 5))
-      )
-    {
-        bad_cmd_bo = Mos_GetBadCommandBuffer_Linux(pOsInterface);
-        if(bad_cmd_bo)
-        {
-            ret = mos_bo_mrb_exec(bad_cmd_bo,
-                                        4096,
-                                        nullptr,
-                                        0,
-                                        0,
-                                        ExecFlag);
-        }
-        {
-            MOS_OS_ASSERTMESSAGE("Mos_GetBadCommandBuffer_Linux failed!");
-        }
-    }
-    else if (pOsInterface->bTriggerVPHang == true)
-    {
-        bad_cmd_bo = Mos_GetBadCommandBuffer_Linux(pOsInterface);
-
-        if (bad_cmd_bo)
-        {
-            ret = mos_bo_mrb_exec(bad_cmd_bo,
-                                        4096,
-                                        nullptr,
-                                        0,
-                                        0,
-                                        ExecFlag);
-        }
-        {
-            MOS_OS_ASSERTMESSAGE("Mos_GetBadCommandBuffer_Linux failed!");
-        }
-
-        pOsInterface->bTriggerVPHang = false;
-    }
-
-    nop_cmd_bo = nullptr;
-    if (bNullRendering == true)
-    {
-        nop_cmd_bo = Mos_GetNopCommandBuffer_Linux(pOsInterface);
-
-        if(nop_cmd_bo)
-        {
-            ret = mos_bo_mrb_exec(nop_cmd_bo,
-                                        4096,
-                                        nullptr,
-                                        0,
-                                        0,
-                                        ExecFlag);
-        }
-        {
-            MOS_OS_ASSERTMESSAGE("Mos_GetNopCommandBuffer_Linux failed!");
-        }
-    }
-
-#endif //(_DEBUG || _RELEASE_INTERNAL)
-
-    if (GpuNode != I915_EXEC_RENDER &&
-        pOsInterface->osCpInterface->IsTearDownHappen())
-    {
-        // to skip PAK command when CP tear down happen to avoid of GPU hang
-        // conditonal batch buffer start PoC is in progress
-    }
-    else if (bNullRendering == false)
-    {
-
-     ret = mos_gem_bo_context_exec2(cmd_bo,
-                                       pOsGpuContext->uiCommandBufferSize,
-                                       pOsContext->intel_context,
-                                       cliprects,
-                                       num_cliprects,
-                                       DR4,
-                                       ExecFlag,
-                                       nullptr);
-      if (ret != 0) {
-          eStatus = MOS_STATUS_UNKNOWN;
-      }
-    }
-
-    if (eStatus != MOS_STATUS_SUCCESS)
-    {
-        MOS_OS_ASSERTMESSAGE("Command buffer submission failed!");
-    }
-
-#if MOS_COMMAND_BUFFER_DUMP_SUPPORTED
-    if (pOsInterface->bDumpCommandBuffer)
-    {
-        mos_bo_map(cmd_bo, 0);
-        pOsInterface->pfnDumpCommandBuffer(pOsInterface, pCmdBuffer);
-        mos_bo_unmap(cmd_bo);
-    }
-#endif // MOS_COMMAND_BUFFER_DUMP_SUPPORTED
-
-#if (_DEBUG || _RELEASE_INTERNAL)
-    if(bad_cmd_bo)
-    {
-        mos_bo_wait_rendering(bad_cmd_bo);
-        mos_bo_unreference(bad_cmd_bo);
-    }
-    if(nop_cmd_bo)
-    {
-        mos_bo_unreference(nop_cmd_bo);
-    }
-#endif //(_DEBUG || _RELEASE_INTERNAL)
-
-    //clear command buffer relocations to fix memory leak issue
-    mos_gem_bo_clear_relocs(cmd_bo, 0);
-
-    // Reset resource allocation
-    pOsGpuContext->uiNumAllocations = 0;
-    MOS_ZeroMemory(pOsGpuContext->pAllocationList, sizeof(ALLOCATION_LIST) * pOsGpuContext->uiMaxNumAllocations);
-    pOsGpuContext->uiCurrentNumPatchLocations = 0;
-    MOS_ZeroMemory(pOsGpuContext->pPatchLocationList, sizeof(PATCHLOCATIONLIST) * pOsGpuContext->uiMaxPatchLocationsize);
-    pOsGpuContext->uiResCount = 0;
-
-    MOS_ZeroMemory(pOsGpuContext->pbWriteMode, sizeof(int32_t) * pOsGpuContext->uiMaxNumAllocations);
-finish:
-    return eStatus;
+    MOS_OS_ASSERTMESSAGE("Not support this path");
+    return MOS_STATUS_UNIMPLEMENTED;
 }
 
 //!
@@ -5405,141 +5108,6 @@ int32_t Mos_Specific_IsPerfTagSet(
 }
 
 //!
-//! \brief    Convet from OS to Mos format
-//! \details  need to refactor this function after libva ddi interface done, or after OS format defined
-//!          for Linux/Android
-//! \param    MOS_OS_FORMAT format
-//!           [in] OS surface format
-//! \return   MOS_FORMAT
-//!           Return Mos format
-//!
-MOS_FORMAT Mos_Specific_FmtOsToMos(
-    MOS_OS_FORMAT   format)
-{
-    switch (static_cast<int>(format))
-    {
-        case DDI_FORMAT_A8B8G8R8     : return Format_A8R8G8B8;
-        case DDI_FORMAT_X8B8G8R8     : return Format_X8R8G8B8;
-        case DDI_FORMAT_R32F         : return Format_R32F;
-        case DDI_FORMAT_A8R8G8B8     : return Format_A8R8G8B8;
-        case DDI_FORMAT_X8R8G8B8     : return Format_X8R8G8B8;
-        case DDI_FORMAT_R5G6B5       : return Format_R5G6B5;
-        case DDI_FORMAT_YUY2         : return Format_YUY2;
-        case DDI_FORMAT_P8           : return Format_P8;
-        case DDI_FORMAT_A8P8         : return Format_A8P8;
-        case DDI_FORMAT_A8           : return Format_A8;
-        case DDI_FORMAT_L8           : return Format_L8;
-        case DDI_FORMAT_L16          : return Format_L16;
-        case DDI_FORMAT_A4L4         : return Format_A4L4;
-        case DDI_FORMAT_A8L8         : return Format_A8L8;
-        case DDI_FORMAT_V8U8         : return Format_V8U8;
-        case DDI_FORMAT_A16B16G16R16 : return Format_A16B16G16R16;
-        case DDI_FORMAT_R32G32B32A32F: return Format_R32G32B32A32F;
-        case FOURCC_YVYU             : return Format_YVYU;
-        case FOURCC_UYVY             : return Format_UYVY;
-        case FOURCC_VYUY             : return Format_VYUY;
-        case FOURCC_AYUV             : return Format_AYUV;
-        case FOURCC_NV12             : return Format_NV12;
-        case FOURCC_NV21             : return Format_NV21;
-        case FOURCC_NV11             : return Format_NV11;
-        case FOURCC_P208             : return Format_P208;
-        case FOURCC_IMC1             : return Format_IMC1;
-        case FOURCC_IMC2             : return Format_IMC2;
-        case FOURCC_IMC3             : return Format_IMC3;
-        case FOURCC_IMC4             : return Format_IMC4;
-        case FOURCC_I420             : return Format_I420;
-        case FOURCC_IYUV             : return Format_IYUV;
-        case FOURCC_YV12             : return Format_YV12;
-        case FOURCC_YVU9             : return Format_YVU9;
-        case FOURCC_AI44             : return Format_AI44;
-        case FOURCC_IA44             : return Format_IA44;
-        case FOURCC_400P             : return Format_400P;
-        case FOURCC_411P             : return Format_411P;
-        case FOURCC_411R             : return Format_411R;
-        case FOURCC_422H             : return Format_422H;
-        case FOURCC_422V             : return Format_422V;
-        case FOURCC_444P             : return Format_444P;
-        case FOURCC_RGBP             : return Format_RGBP;
-        case FOURCC_BGRP             : return Format_BGRP;
-        case FOURCC_P010             : return Format_P010;
-        case FOURCC_P016             : return Format_P016;
-        case FOURCC_Y216             : return Format_Y216;
-        case FOURCC_Y416             : return Format_Y416;
-        case FOURCC_Y210             : return Format_Y210;
-        case FOURCC_Y410             : return Format_Y410;
-        default                      : return Format_Invalid;
-    }
-}
-
-//!
-//! \brief    Convet from MOS OS to OS format
-//! \details  need to refactor this function after libva ddi interface done, or after OS format defined
-//!          for Linux/Android
-//! \param    MOS_FORMAT format
-//!           [in] MOS OS surface format
-//! \return   MOS_OS_FORMAT
-//!           Return OS format
-//!
-MOS_OS_FORMAT Mos_Specific_FmtMosToOs(
-    MOS_FORMAT     format)
-{
-    switch (format)
-    {
-    case Format_A8R8G8B8     : return (MOS_OS_FORMAT)DDI_FORMAT_A8R8G8B8;
-    case Format_X8R8G8B8     : return (MOS_OS_FORMAT)DDI_FORMAT_X8R8G8B8;
-    case Format_A8B8G8R8     : return (MOS_OS_FORMAT)DDI_FORMAT_A8B8G8R8;
-    case Format_R32U         : return (MOS_OS_FORMAT)DDI_FORMAT_R32F;
-    case Format_R32F         : return (MOS_OS_FORMAT)DDI_FORMAT_R32F;
-    case Format_R5G6B5       : return (MOS_OS_FORMAT)DDI_FORMAT_R5G6B5;
-    case Format_YUY2         : return (MOS_OS_FORMAT)DDI_FORMAT_YUY2;
-    case Format_P8           : return (MOS_OS_FORMAT)DDI_FORMAT_P8;
-    case Format_A8P8         : return (MOS_OS_FORMAT)DDI_FORMAT_A8P8;
-    case Format_A8           : return (MOS_OS_FORMAT)DDI_FORMAT_A8;
-    case Format_L8           : return (MOS_OS_FORMAT)DDI_FORMAT_L8;
-    case Format_L16          : return (MOS_OS_FORMAT)DDI_FORMAT_L16;
-    case Format_A4L4         : return (MOS_OS_FORMAT)DDI_FORMAT_A4L4;
-    case Format_A8L8         : return (MOS_OS_FORMAT)DDI_FORMAT_A8L8;
-    case Format_V8U8         : return (MOS_OS_FORMAT)DDI_FORMAT_V8U8;
-    case Format_YVYU         : return (MOS_OS_FORMAT)FOURCC_YVYU;
-    case Format_UYVY         : return (MOS_OS_FORMAT)FOURCC_UYVY;
-    case Format_VYUY         : return (MOS_OS_FORMAT)FOURCC_VYUY;
-    case Format_AYUV         : return (MOS_OS_FORMAT)FOURCC_AYUV;
-    case Format_NV12         : return (MOS_OS_FORMAT)FOURCC_NV12;
-    case Format_NV21         : return (MOS_OS_FORMAT)FOURCC_NV21;
-    case Format_NV11         : return (MOS_OS_FORMAT)FOURCC_NV11;
-    case Format_P208         : return (MOS_OS_FORMAT)FOURCC_P208;
-    case Format_IMC1         : return (MOS_OS_FORMAT)FOURCC_IMC1;
-    case Format_IMC2         : return (MOS_OS_FORMAT)FOURCC_IMC2;
-    case Format_IMC3         : return (MOS_OS_FORMAT)FOURCC_IMC3;
-    case Format_IMC4         : return (MOS_OS_FORMAT)FOURCC_IMC4;
-    case Format_I420         : return (MOS_OS_FORMAT)FOURCC_I420;
-    case Format_IYUV         : return (MOS_OS_FORMAT)FOURCC_IYUV;
-    case Format_YV12         : return (MOS_OS_FORMAT)FOURCC_YV12;
-    case Format_YVU9         : return (MOS_OS_FORMAT)FOURCC_YVU9;
-    case Format_AI44         : return (MOS_OS_FORMAT)FOURCC_AI44;
-    case Format_IA44         : return (MOS_OS_FORMAT)FOURCC_IA44;
-    case Format_400P         : return (MOS_OS_FORMAT)FOURCC_400P;
-    case Format_411P         : return (MOS_OS_FORMAT)FOURCC_411P;
-    case Format_411R         : return (MOS_OS_FORMAT)FOURCC_411R;
-    case Format_422H         : return (MOS_OS_FORMAT)FOURCC_422H;
-    case Format_422V         : return (MOS_OS_FORMAT)FOURCC_422V;
-    case Format_444P         : return (MOS_OS_FORMAT)FOURCC_444P;
-    case Format_RGBP         : return (MOS_OS_FORMAT)FOURCC_RGBP;
-    case Format_BGRP         : return (MOS_OS_FORMAT)FOURCC_BGRP;
-    case Format_STMM         : return (MOS_OS_FORMAT)DDI_FORMAT_P8;
-    case Format_P010         : return (MOS_OS_FORMAT)FOURCC_P010;
-    case Format_P016         : return (MOS_OS_FORMAT)FOURCC_P016;
-    case Format_Y216         : return (MOS_OS_FORMAT)FOURCC_Y216;
-    case Format_Y416         : return (MOS_OS_FORMAT)FOURCC_Y416;
-    case Format_A16B16G16R16 : return (MOS_OS_FORMAT)DDI_FORMAT_A16B16G16R16;
-    case Format_Y210         : return (MOS_OS_FORMAT)FOURCC_Y216;
-    case Format_Y410         : return (MOS_OS_FORMAT)FOURCC_Y410;
-    case Format_R32G32B32A32F: return (MOS_OS_FORMAT)DDI_FORMAT_R32G32B32A32F;
-    default                  : return (MOS_OS_FORMAT)DDI_FORMAT_UNKNOWN;
-    }
-}
-
-//!
 //! \brief    Check for GPU context valid
 //! \details  Always returns MOS_STATUS_SUCCESS on Linux.
 //            This interface is implemented for compatibility.
@@ -5858,11 +5426,19 @@ void Mos_Specific_IncrementGpuStatusTag(
 //!
 uint32_t Mos_Specific_GetGpuStatusSyncTag(
     PMOS_INTERFACE            pOsInterface,
-    MOS_GPU_CONTEXT           GpuContext)
+    MOS_GPU_CONTEXT           gpuContext)
 {
-    MOS_UNUSED(pOsInterface);
-    MOS_UNUSED(GpuContext);
-    return 0;
+    MOS_OS_FUNCTION_ENTER;
+    PMOS_CONTEXT pOsContext = nullptr;
+
+    if(!pOsInterface || !pOsInterface->pOsContext)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid nullptr");
+        return 0;
+    }
+    pOsContext = pOsInterface->pOsContext;
+
+    return pOsContext->GetGPUTag(pOsInterface, gpuContext);
 }
 
 //!
@@ -6050,12 +5626,12 @@ MOS_STATUS Mos_Specific_InitializeMultiThreadingSyncTags(
 
     if(*pOsResource->ppReferenceFrameSemaphore == nullptr)
     {
-        *pOsResource->ppReferenceFrameSemaphore = MOS_CreateSemaphore(1, 1);
+        *pOsResource->ppReferenceFrameSemaphore = MosUtilities::MosCreateSemaphore(1, 1);
     }
 
     if(*pOsResource->ppCurrentFrameSemaphore == nullptr)
     {
-        *pOsResource->ppCurrentFrameSemaphore = MOS_CreateSemaphore(1, 1);
+        *pOsResource->ppCurrentFrameSemaphore = MosUtilities::MosCreateSemaphore(1, 1);
     }
 
     if((*pOsResource->ppReferenceFrameSemaphore != nullptr) && (*pOsResource->ppCurrentFrameSemaphore != nullptr))
@@ -6083,7 +5659,7 @@ MOS_STATUS Mos_Specific_MultiThreadingWaitCurrentFrame(
 
     MOS_OS_CHK_NULL(pOsResource);
 
-    MOS_OS_CHK_STATUS(MOS_WaitSemaphore(*pOsResource->ppCurrentFrameSemaphore, INFINITE));
+    MOS_OS_CHK_STATUS(MosUtilities::MosWaitSemaphore(*pOsResource->ppCurrentFrameSemaphore, INFINITE));
 
 finish:
     return eStatus;
@@ -6103,7 +5679,7 @@ MOS_STATUS Mos_Specific_MultiThreadingPostCurrentFrame(
 
     MOS_OS_CHK_NULL(pOsResource);
 
-    MOS_OS_CHK_STATUS(MOS_PostSemaphore(*pOsResource->ppCurrentFrameSemaphore, 1));
+    MOS_OS_CHK_STATUS(MosUtilities::MosPostSemaphore(*pOsResource->ppCurrentFrameSemaphore, 1));
 
 finish:
     return eStatus;
@@ -6230,6 +5806,23 @@ MOS_STATUS Mos_Specific_WaitAllCmdCompletion_Os(
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
 
     return eStatus;
+}
+
+//!
+//! \brief    Get interface version
+//! \details  Get interface version
+//!
+//! \param    PMOS_INTERFACE pOsInterface
+//!           [in] OS Interface
+//!
+//! \return   uint32_t
+//!           Read-only OS runtime interface version, it's meaning diff from OS and API
+//!
+uint32_t Mos_Specific_GetInterfaceVersion(
+    PMOS_INTERFACE        pOsInterface)
+{
+    MOS_UNUSED(pOsInterface);
+    return 0;
 }
 
 //!
@@ -7307,7 +6900,7 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             NULL,
             __MEDIA_USER_FEATURE_VALUE_ENABLE_HCP_SCALABILITY_DECODE_ID,
             &userFeatureData,
-            nullptr);
+            (MOS_CONTEXT_HANDLE)osInterface->pOsContext);
         osInterface->bHcpDecScalabilityMode = userFeatureData.u32Data ? MOS_SCALABILITY_ENABLE_MODE_DEFAULT : MOS_SCALABILITY_ENABLE_MODE_FALSE;
         if(osInterface->bHcpDecScalabilityMode
             && (eStatusUserFeature == MOS_STATUS_SUCCESS))
@@ -7323,7 +6916,7 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             NULL,
             __MEDIA_USER_FEATURE_VALUE_ENABLE_LINUX_FRAME_SPLIT_ID,
             &userFeatureData,
-            nullptr);
+            (MOS_CONTEXT_HANDLE)osInterface->pOsContext);
         osInterface->frameSplit = (uint32_t)userFeatureData.i32Data;
 
         MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
@@ -7331,7 +6924,7 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             NULL,
             __MEDIA_USER_FEATURE_VALUE_ENABLE_GUC_SUBMISSION_ID,
             &userFeatureData,
-        nullptr);
+            (MOS_CONTEXT_HANDLE)osInterface->pOsContext);
         osInterface->bGucSubmission = osInterface->bGucSubmission && ((uint32_t)userFeatureData.i32Data);
 
         // read the "Force VEBOX" user feature key
@@ -7341,7 +6934,7 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             NULL,
             __MEDIA_USER_FEATURE_VALUE_FORCE_VEBOX_ID,
             &userFeatureData,
-            nullptr);
+            (MOS_CONTEXT_HANDLE)osInterface->pOsContext);
         osInterface->eForceVebox = (MOS_FORCE_VEBOX)userFeatureData.u32Data;
 
         //KMD Virtual Engine DebugOverride
@@ -7351,7 +6944,7 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             NULL,
             __MEDIA_USER_FEATURE_VALUE_ENABLE_VE_DEBUG_OVERRIDE_ID,
             &userFeatureData,
-            nullptr);
+            (MOS_CONTEXT_HANDLE)osInterface->pOsContext);
         osInterface->bEnableDbgOvrdInVE = userFeatureData.u32Data ? true : false;
 #endif
 
@@ -7362,7 +6955,7 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             NULL,
             __MEDIA_USER_FEATURE_VALUE_ENABLE_VEBOX_SCALABILITY_MODE_ID,
             &userFeatureData,
-            nullptr);
+            (MOS_CONTEXT_HANDLE)osInterface->pOsContext);
         osInterface->bVeboxScalabilityMode = userFeatureData.u32Data ? MOS_SCALABILITY_ENABLE_MODE_DEFAULT : MOS_SCALABILITY_ENABLE_MODE_FALSE;
 
 #if (_DEBUG || _RELEASE_INTERNAL)
@@ -7390,12 +6983,36 @@ static MOS_STATUS Mos_Specific_InitInterface_Ve(
             NULL,
             __MEDIA_USER_FEATURE_VALUE_FORCE_VEBOX_ID,
             &userFeatureData,
-            nullptr);
+            (MOS_CONTEXT_HANDLE)osInterface->pOsContext);
         osInterface->eForceVebox = (MOS_FORCE_VEBOX)userFeatureData.u32Data;
 #endif
     }
 
     return eStatus;
+}
+
+MediaUserSettingSharedPtr Mos_Specific_GetUserSettingInstance(
+    PMOS_INTERFACE osInterface)
+{
+    MOS_OS_FUNCTION_ENTER;
+    PMOS_CONTEXT mosContext = nullptr;
+    if (!osInterface)
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid mosContext ptr");
+        return nullptr;
+    }
+
+    if (osInterface->apoMosEnabled)
+    {
+        return MosInterface::MosGetUserSettingInstance(osInterface->osStreamState);
+    }
+
+    return nullptr;
+}
+
+bool Mos_Specific_IsMismatchOrderProgrammingSupported()
+{
+    return MosInterface::IsMismatchOrderProgrammingSupported();
 }
 
 //! \brief    Unified OS Initializes OS Linux Interface
@@ -7459,13 +7076,6 @@ MOS_STATUS Mos_Specific_InitInterface(
         // Create Linux OS Context
         pOsContext = (PMOS_OS_CONTEXT)MOS_AllocAndZeroMemory(sizeof(MOS_OS_CONTEXT));
         MOS_OS_CHK_NULL_RETURN(pOsContext);
-
-        if (GMM_SUCCESS != OpenGmm(&pOsContext->GmmFuncs))
-        {
-            MOS_OS_ASSERTMESSAGE("Unable to open gmm");
-            eStatus = MOS_STATUS_INVALID_PARAMETER;
-            goto finish;
-        }
     }
 
     if (pOsInterface->modulizedMosEnabled && !Mos_Solo_IsEnabled(nullptr))
@@ -7496,12 +7106,12 @@ MOS_STATUS Mos_Specific_InitInterface(
         {
             OsContextSpecific *pOsContextSpecific = static_cast<OsContextSpecific *>(pOsInterface->osContextPtr);
             pOsContext->intel_context             = pOsContextSpecific->GetDrmContext();
-            pOsContext->pGmmClientContext         = pOsContext->GmmFuncs.pfnCreateClientContext((GMM_CLIENT)GMM_LIBVA_LINUX);
+            pOsContext->pGmmClientContext         = pOsDriverContext->pGmmClientContext;
         }
     }
     else
     {
-        pOsContext->pGmmClientContext = pOsContext->GmmFuncs.pfnCreateClientContext((GMM_CLIENT)GMM_LIBVA_LINUX);
+        pOsContext->pGmmClientContext = pOsDriverContext->pGmmClientContext;
     }
 
     MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
@@ -7517,7 +7127,7 @@ MOS_STATUS Mos_Specific_InitInterface(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_SIM_ENABLE_ID,
         &UserFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)pOsContext);
 #endif
     pOsInterface->bSimIsActive = (int32_t)UserFeatureData.i32Data;
     if (!pOsInterface->apoMosEnabled)
@@ -7578,6 +7188,7 @@ MOS_STATUS Mos_Specific_InitInterface(
     pOsInterface->pfnLockResource                           = Mos_Specific_LockResource;
     pOsInterface->pfnUnlockResource                         = Mos_Specific_UnlockResource;
     pOsInterface->pfnDecompResource                         = Mos_Specific_DecompResource;
+    pOsInterface->pfnSetDecompSyncRes                       = Mos_Specific_SetDecompSyncRes;
     pOsInterface->pfnDoubleBufferCopyResource               = Mos_Specific_DoubleBufferCopyResource;
     pOsInterface->pfnMediaCopyResource2D                    = Mos_Specific_MediaCopyResource2D;
     pOsInterface->pfnGetMosContext                          = Mos_Specific_GetMosContext;
@@ -7593,8 +7204,6 @@ MOS_STATUS Mos_Specific_InitInterface(
     pOsInterface->pfnWaitAndReleaseCmdBuffer                = Mos_Specific_WaitAndReleaseCmdBuffer;
     pOsInterface->pfnVerifyCommandBufferSize                = Mos_Specific_VerifyCommandBufferSize;
     pOsInterface->pfnResizeCommandBufferAndPatchList        = Mos_Specific_ResizeCommandBufferAndPatchList;
-    pOsInterface->pfnFmt_OsToMos                            = Mos_Specific_FmtOsToMos;
-    pOsInterface->pfnFmt_MosToOs                            = Mos_Specific_FmtMosToOs;
     pOsInterface->pfnFmt_MosToGmm                           = Mos_Specific_ConvertMosFmtToGmmFmt;
     pOsInterface->pfnSetPerfTag                             = Mos_Specific_SetPerfTag;
     pOsInterface->pfnResetPerfBufferID                      = Mos_Specific_ResetPerfBufferID;
@@ -7607,6 +7216,7 @@ MOS_STATUS Mos_Specific_InitInterface(
     pOsInterface->pfnGetIndirectState                       = Mos_Specific_GetIndirectState;
     pOsInterface->pfnGetIndirectStatePointer                = Mos_Specific_GetIndirectStatePointer;
     pOsInterface->pfnSetPatchEntry                          = Mos_Specific_SetPatchEntry;
+    pOsInterface->pfnGetInterfaceVersion                    = Mos_Specific_GetInterfaceVersion;
 
     pOsInterface->pfnLoadLibrary                            = Mos_Specific_LoadLibrary;
     pOsInterface->pfnFreeLibrary                            = Mos_Specific_FreeLibrary;
@@ -7678,6 +7288,10 @@ MOS_STATUS Mos_Specific_InitInterface(
     pOsInterface->pfnGetGpuContextMgr                       = Mos_Specific_GetGpuContextMgr;
     pOsInterface->pfnGetGpuContextbyHandle                  = Mos_Specific_GetGpuContextbyHandle;
 
+    pOsInterface->pfnGetUserSettingInstance                 = Mos_Specific_GetUserSettingInstance;
+
+    pOsInterface->pfnIsMismatchOrderProgrammingSupported    = Mos_Specific_IsMismatchOrderProgrammingSupported;
+
     pOsUserFeatureInterface->bIsNotificationSupported   = false;
     pOsUserFeatureInterface->pOsInterface               = pOsInterface;
 
@@ -7731,7 +7345,7 @@ MOS_STATUS Mos_Specific_InitInterface(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_FORCE_VDBOX_ID,
         &UserFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)pOsContext);
     pOsInterface->eForceVdbox = UserFeatureData.u32Data;
 
     // Force TileYf/Ys
@@ -7741,7 +7355,7 @@ MOS_STATUS Mos_Specific_InitInterface(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_FORCE_YFYS_ID,
         &UserFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)pOsContext);
     pOsInterface->dwForceTileYfYs = (uint32_t)UserFeatureData.i32Data;
 
     // Null HW Driver
@@ -7751,7 +7365,7 @@ MOS_STATUS Mos_Specific_InitInterface(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_NULL_HW_ACCELERATION_ENABLE_ID,
         &UserFeatureData,
-        nullptr));
+        (MOS_CONTEXT_HANDLE)pOsContext));
     pOsInterface->NullHWAccelerationEnable.Value = UserFeatureData.u32Data;
 #endif // (_DEBUG || _RELEASE_INTERNAL)
 
@@ -7766,7 +7380,7 @@ MOS_STATUS Mos_Specific_InitInterface(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_DISABLE_KMD_WATCHDOG_ID,
             &UserFeatureData,
-            nullptr);
+            (MOS_CONTEXT_HANDLE)pOsContext);
         pOsContext->bDisableKmdWatchdog = (UserFeatureData.i32Data) ? true : false;
 
         // read "Linux PerformanceTag Enable" user feature key
@@ -7775,7 +7389,7 @@ MOS_STATUS Mos_Specific_InitInterface(
             nullptr,
             __MEDIA_USER_FEATURE_VALUE_LINUX_PERFORMANCETAG_ENABLE_ID,
             &UserFeatureData,
-            nullptr);
+            (MOS_CONTEXT_HANDLE)pOsContext);
         pOsContext->uEnablePerfTag = UserFeatureData.i32Data;
     }
     eStatus = Mos_Specific_InitInterface_Ve(pOsInterface);

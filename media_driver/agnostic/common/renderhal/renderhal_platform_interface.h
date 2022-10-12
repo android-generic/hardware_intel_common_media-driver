@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2020, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -383,6 +383,136 @@ public:
     virtual bool IsComputeContextInUse(
         PRENDERHAL_INTERFACE    pRenderHal) = 0;
 
+    //! \brief    Add Pipeline SelectCmd
+    //! \details  Add Pipeline SelectCmd
+    //! \param    PRENDERHAL_INTERFACE pRenderHal
+    //!           [in] Pointer to RenderHal Interface Structure
+    //! \param    PMOS_COMMAND_BUFFER pCmdBuffer
+    //!           [in] Pointer to Command Buffer
+    //! \return   MOS_STATUS
+    virtual MOS_STATUS AddPipelineSelectCmd(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_COMMAND_BUFFER         pCmdBuffer,
+        bool                        gpGpuPipe) = 0;
+
+    //! \brief    Send StateBase Address
+    //! \details  Send StateBase Address
+    //! \param    PRENDERHAL_INTERFACE pRenderHal
+    //!           [in] Pointer to RenderHal Interface Structure
+    //! \param    PMOS_COMMAND_BUFFER pCmdBuffer
+    //!           [in] Pointer to Command Buffer
+    //! \return   MOS_STATUS
+    virtual MOS_STATUS SendStateBaseAddress(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_COMMAND_BUFFER         pCmdBuffer) = 0;
+
+    //! \brief    Add Sip State Cmd
+    //! \details  Add Sip State Cmd
+    //! \param    PRENDERHAL_INTERFACE pRenderHal
+    //!           [in] Pointer to RenderHal Interface Structure
+    //! \param    PMOS_COMMAND_BUFFER pCmdBuffer
+    //!           [in] Pointer to Command Buffer
+    //! \return   MOS_STATUS
+    virtual MOS_STATUS AddSipStateCmd(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_COMMAND_BUFFER         pCmdBuffer) = 0;
+
+    //! \brief    Add Cfe State Cmd
+    //! \details  Add Cfe State Cmd
+    //! \param    PRENDERHAL_INTERFACE pRenderHal
+    //!           [in] Pointer to RenderHal Interface Structure
+    //! \param    PMOS_COMMAND_BUFFER pCmdBuffer
+    //!           [in] Pointer to Command Buffer
+    //! \return   MOS_STATUS
+    virtual MOS_STATUS AddCfeStateCmd(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_COMMAND_BUFFER         pCmdBuffer,
+        PMHW_VFE_PARAMS             params) = 0;
+
+    //! \brief    Send ChromaKey
+    //! \details  Send ChromaKey
+    //! \param    PRENDERHAL_INTERFACE pRenderHal
+    //!           [in] Pointer to RenderHal Interface Structure
+    //! \param    PMOS_COMMAND_BUFFER pCmdBuffer
+    //!           [in] Pointer to Command Buffer
+    //! \return   MOS_STATUS
+    virtual MOS_STATUS SendChromaKey(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_COMMAND_BUFFER         pCmdBuffer) = 0;
+
+    //! \brief    Send Palette
+    //! \details  Send Palette
+    //! \param    PRENDERHAL_INTERFACE pRenderHal
+    //!           [in] Pointer to RenderHal Interface Structure
+    //! \param    PMOS_COMMAND_BUFFER pCmdBuffer
+    //!           [in] Pointer to Command Buffer
+    //! \return   MOS_STATUS
+    virtual MOS_STATUS SendPalette(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_COMMAND_BUFFER         pCmdBuffer) = 0;
+
+    //! \brief    Set L3Cache
+    //! \details  Set L3Cache
+    //! \param    PRENDERHAL_INTERFACE pRenderHal
+    //!           [in] Pointer to RenderHal Interface Structure
+    //! \param    PMOS_COMMAND_BUFFER pCmdBuffer
+    //!           [in] Pointer to Command Buffer
+    //! \return   MOS_STATUS
+    virtual MOS_STATUS SetL3Cache(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_COMMAND_BUFFER         pCmdBuffer) = 0;
+
+    virtual PMHW_MI_MMIOREGISTERS GetMmioRegisters(
+        PRENDERHAL_INTERFACE        pRenderHal) = 0;
+
+    virtual MOS_STATUS EnablePreemption(
+        PRENDERHAL_INTERFACE            pRenderHal,
+        PMOS_COMMAND_BUFFER             pCmdBuffer) = 0;
+
+    virtual MOS_STATUS SendPredicationCommand(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_COMMAND_BUFFER         pCmdBuffer) = 0;
+
+    //! \brief    Adds marker attributes in command buffer
+    //! \param    PRENDERHAL_INTERFACE pRenderHal
+    //!           [in] Pointer to RenderHal Interface Structure
+    //! \param    PMOS_COMMAND_BUFFER pcmdBuffer
+    //!           [in] Pointer to Command Buffer
+    //! \param    bool isRender
+    //!           [in] Flag of Render Engine
+    //! \return   MOS_STATUS
+    virtual MOS_STATUS SendMarkerCommand(
+        PRENDERHAL_INTERFACE    pRenderHal,
+        PMOS_COMMAND_BUFFER     cmdBuffer,
+        bool                    isRender) = 0;
+
+    virtual MOS_STATUS AddMiPipeControl(
+        PRENDERHAL_INTERFACE    pRenderHal,
+        PMOS_COMMAND_BUFFER        pCmdBuffer,
+        MHW_PIPE_CONTROL_PARAMS*   params) = 0;
+
+    //!
+    //! \brief    Adds MI_LOAD_REGISTER_IMM to the command buffer
+    //! \param    PRENDERHAL_INTERFACE pRenderHal
+    //!           [in] Pointer to RenderHal Interface Structure
+    //! \param    [in] pCmdBuffer
+    //!           Command buffer to which requested command is added
+    //! \param    [in] params
+    //!           Parameters used to populate the requested command
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS AddMiLoadRegisterImmCmd(
+        PRENDERHAL_INTERFACE             pRenderHal,
+        PMOS_COMMAND_BUFFER              pCmdBuffer,
+        PMHW_MI_LOAD_REGISTER_IMM_PARAMS params) = 0;
+
+    virtual MOS_STATUS SendGenericPrologCmd(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_COMMAND_BUFFER         pCmdBuffer,
+        PMHW_GENERIC_PROLOG_PARAMS  pParams,
+        MHW_MI_MMIOREGISTERS* pMmioReg = nullptr) = 0;
+
     //! \brief    Send Compute Walker
     //! \details  Send Compute Walker
     //! \param    PRENDERHAL_INTERFACE pRenderHal
@@ -441,6 +571,13 @@ public:
 
         return;
     }
+
+    virtual MOS_STATUS CreateMhwInterfaces(
+        PRENDERHAL_INTERFACE        pRenderHal,
+        PMOS_INTERFACE              pOsInterface) = 0;
+
+    virtual std::shared_ptr<mhw::mi::Itf> GetMhwMiItf() = 0;
+
 };
 
 #endif // __RENDERHAL_PLATFORM_INTERFACE_H__

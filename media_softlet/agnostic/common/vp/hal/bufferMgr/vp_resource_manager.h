@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2021, Intel Corporation
+* Copyright (c) 2018-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -60,6 +60,8 @@
                                !(_a.bQueryVariance) && \
                                !(_a.bIECP) && \
                                !(_a.b3DlutOutput))
+
+#define VP_NUM_FC_INTERMEDIA_SURFACES   2
 
 namespace vp {
     struct VEBOX_SPATIAL_ATTRIBUTES_CONFIGURATION
@@ -336,10 +338,14 @@ public:
     virtual ~VpResourceManager();
     virtual MOS_STATUS OnNewFrameProcessStart(SwFilterPipe &pipe);
     virtual void OnNewFrameProcessEnd();
+    MOS_STATUS PrepareFcIntermediateSurface(SwFilterPipe &featurePipe);
     MOS_STATUS GetResourceHint(std::vector<FeatureType> &featurePool, SwFilterPipe& executedFilters, RESOURCE_ASSIGNMENT_HINT &hint);
     MOS_STATUS AssignExecuteResource(std::vector<FeatureType> &featurePool, VP_EXECUTE_CAPS& caps, SwFilterPipe &executedFilters);
-    MOS_STATUS AssignExecuteResource(VP_EXECUTE_CAPS& caps, VP_SURFACE *inputSurface, VP_SURFACE *outputSurface, VP_SURFACE *pastSurface, VP_SURFACE *futureSurface,
-        RESOURCE_ASSIGNMENT_HINT resHint, VP_SURFACE_SETTING &surfSetting);
+    MOS_STATUS AssignExecuteResource(VP_EXECUTE_CAPS& caps, std::vector<VP_SURFACE *> &inputSurfaces, VP_SURFACE *outputSurface,
+        std::vector<VP_SURFACE *> &pastSurfaces, std::vector<VP_SURFACE *> &futureSurfaces,
+        RESOURCE_ASSIGNMENT_HINT resHint, VP_SURFACE_SETTING &surfSetting, SwFilterPipe& executedFilters);
+
+    virtual MOS_STATUS FillLinearBufferWithEncZero(VP_SURFACE *surface, uint32_t width, uint32_t height);
 
     bool IsSameSamples()
     {
@@ -375,7 +381,7 @@ public:
     }
 
     virtual VP_SURFACE* GetVeboxFrameHistogramSurface()
-   {
+    {
        return NULL;
     }
 
@@ -407,24 +413,33 @@ protected:
     bool VeboxOutputNeeded(VP_EXECUTE_CAPS& caps);
     bool VeboxDenoiseOutputNeeded(VP_EXECUTE_CAPS& caps);
     bool VeboxHdr3DlutNeeded(VP_EXECUTE_CAPS &caps);
+    bool Vebox1DlutNeeded(VP_EXECUTE_CAPS &caps);
     // In some case, STMM should not be destroyed but not be used by current workload to maintain data,
     // e.g. DI second field case.
     // If queryAssignment == true, query whether STMM needed by current workload.
     // If queryAssignment == false, query whether STMM needed to be allocated.
     bool VeboxSTMMNeeded(VP_EXECUTE_CAPS& caps, bool queryAssignment);
     virtual uint32_t GetHistogramSurfaceSize(VP_EXECUTE_CAPS& caps, uint32_t inputWidth, uint32_t inputHeight);
-    virtual uint32_t Get3DLutSize();
-    virtual Mos_MemPool GetHistStatMemType();
+    virtual uint32_t Get3DLutSize(uint32_t &lutWidth, uint32_t &lutHeight);
+    virtual uint32_t Get1DLutSize();
+    virtual MOS_STATUS  Init3DLutSurface2D(VP_SURFACE *surf);
+    virtual Mos_MemPool GetHistStatMemType(VP_EXECUTE_CAPS &caps);
     MOS_STATUS ReAllocateVeboxOutputSurface(VP_EXECUTE_CAPS& caps, VP_SURFACE *inputSurface, VP_SURFACE *outputSurface, bool &allocated);
     MOS_STATUS ReAllocateVeboxDenoiseOutputSurface(VP_EXECUTE_CAPS& caps, VP_SURFACE *inputSurface, bool &allocated);
     MOS_STATUS ReAllocateVeboxSTMMSurface(VP_EXECUTE_CAPS& caps, VP_SURFACE *inputSurface, bool &allocated);
     void DestoryVeboxOutputSurface();
     void DestoryVeboxDenoiseOutputSurface();
     void DestoryVeboxSTMMSurface();
-    virtual MOS_STATUS AssignRenderResource(VP_EXECUTE_CAPS &caps, VP_SURFACE *inputSurface, VP_SURFACE *outputSurface, RESOURCE_ASSIGNMENT_HINT resHint, VP_SURFACE_SETTING &surfSetting);
+    virtual MOS_STATUS AssignRenderResource(VP_EXECUTE_CAPS &caps, std::vector<VP_SURFACE *> &inputSurfaces, VP_SURFACE *outputSurface, std::vector<VP_SURFACE *> &pastSurfaces, std::vector<VP_SURFACE *> &futureSurfaces, RESOURCE_ASSIGNMENT_HINT resHint, VP_SURFACE_SETTING &surfSetting, SwFilterPipe &executedFilters);
+    virtual MOS_STATUS Assign3DLutKernelResource(VP_EXECUTE_CAPS &caps, RESOURCE_ASSIGNMENT_HINT resHint, VP_SURFACE_SETTING &surfSetting);
+    virtual MOS_STATUS AssignHVSKernelResource(VP_EXECUTE_CAPS &caps, RESOURCE_ASSIGNMENT_HINT resHint, VP_SURFACE_SETTING &surfSetting);
+    virtual MOS_STATUS AssignFcResources(VP_EXECUTE_CAPS &caps, std::vector<VP_SURFACE *> &inputSurfaces, VP_SURFACE *outputSurface,
+        std::vector<VP_SURFACE *> &pastSurfaces, std::vector<VP_SURFACE *> &futureSurfaces,
+        RESOURCE_ASSIGNMENT_HINT resHint, VP_SURFACE_SETTING &surfSetting);
     virtual MOS_STATUS AssignVeboxResourceForRender(VP_EXECUTE_CAPS &caps, VP_SURFACE *inputSurface, RESOURCE_ASSIGNMENT_HINT resHint, VP_SURFACE_SETTING &surfSetting);
     virtual MOS_STATUS AssignVeboxResource(VP_EXECUTE_CAPS& caps, VP_SURFACE* inputSurface, VP_SURFACE* outputSurface, VP_SURFACE* pastSurface, VP_SURFACE* futureSurface,
         RESOURCE_ASSIGNMENT_HINT resHint, VP_SURFACE_SETTING& surfSetting);
+    MOS_STATUS ReAllocateVeboxStatisticsSurface(VP_SURFACE *&statisticsSurface, VP_EXECUTE_CAPS &caps, VP_SURFACE *inputSurface, uint32_t dwWidth, uint32_t dwHeight);
 
     //!
     //! \brief    Vebox initialize STMM History
@@ -472,8 +487,11 @@ protected:
         m_veboxSurfaceConfigMap.insert(std::make_pair(VEBOX_SURFACES_CONFIG(_b64DI, _sfcEnable, _sameSample, _outOfBound, _pastRefAvailable, _futureRefAvailable, _firstDiField).value, VEBOX_SURFACES(_currentInputSurface, _pastInputSurface, _currentOutputSurface, _pastOutputSurface)));
     }
 
-    MOS_STATUS GetIntermediaOutputSurfaceParams(VP_SURFACE_PARAMS &params, SwFilterPipe &executedFilters);
-    MOS_STATUS AssignIntermediaSurface(SwFilterPipe &executedFilters);
+    virtual MOS_STATUS GetIntermediaColorAndFormat3DLutOutput(VPHAL_CSPACE &colorSpace, MOS_FORMAT &format, SwFilterPipe &executedFilters);
+    virtual MOS_STATUS GetIntermediaColorAndFormatBT2020toRGB(VP_EXECUTE_CAPS &caps, VPHAL_CSPACE &colorSpace, MOS_FORMAT &format, SwFilterPipe &executedFilters);
+    MOS_STATUS GetIntermediaOutputSurfaceParams(VP_EXECUTE_CAPS& caps, VP_SURFACE_PARAMS &params, SwFilterPipe &executedFilters);
+    MOS_STATUS         GetIntermediaOutputSurfaceColorAndFormat(VP_EXECUTE_CAPS &caps, SwFilterPipe &executedFilters, MOS_FORMAT &format, VPHAL_CSPACE &colorSpace);
+    MOS_STATUS AssignIntermediaSurface(VP_EXECUTE_CAPS& caps, SwFilterPipe &executedFilters);
 
     bool IsDeferredResourceDestroyNeeded()
     {
@@ -484,6 +502,13 @@ protected:
 
     void CleanTempSurfaces();
     VP_SURFACE* GetCopyInstOfExtSurface(VP_SURFACE* surf);
+
+    MOS_STATUS GetFormatForFcIntermediaSurface(MOS_FORMAT& format, MEDIA_CSPACE &colorSpace, SwFilterPipe &featurePipe);
+    MOS_STATUS GetFcIntermediateSurfaceForOutput(VP_SURFACE *&intermediaSurface, SwFilterPipe &executedFilters);
+
+    MOS_STATUS Allocate3DLut(VP_EXECUTE_CAPS& caps);
+    MOS_STATUS AllocateResourceFor3DLutKernel(VP_EXECUTE_CAPS& caps);
+    MOS_STATUS AllocateResourceForHVSKernel(VP_EXECUTE_CAPS &caps);
 
 protected:
     MOS_INTERFACE                &m_osInterface;
@@ -496,12 +521,17 @@ protected:
     VP_SURFACE* m_veboxOutput[VP_MAX_NUM_VEBOX_SURFACES]     = {};            //!< Vebox output surface, can be reuse for DI usages
     VP_SURFACE* m_veboxSTMMSurface[VP_NUM_STMM_SURFACES]     = {};            //!< Vebox STMM input/output surface
     VP_SURFACE *m_veboxStatisticsSurface                     = nullptr;       //!< Statistics Surface for VEBOX
+    VP_SURFACE *m_veboxStatisticsSurfacefor1stPassofSfc2Pass = nullptr;       //!< Statistics Surface for VEBOX for 1stPassofSfc2Pass submission
     uint32_t    m_dwVeboxPerBlockStatisticsWidth             = 0;
     uint32_t    m_dwVeboxPerBlockStatisticsHeight            = 0;
     VP_SURFACE *m_veboxRgbHistogram                          = nullptr;       //!< RGB Histogram surface for Vebox
     VP_SURFACE *m_veboxDNTempSurface                         = nullptr;       //!< Vebox DN Update kernels temp surface
     VP_SURFACE *m_veboxDNSpatialConfigSurface                = nullptr;       //!< Spatial Attributes Configuration Surface for DN kernel
     VP_SURFACE *m_vebox3DLookUpTables                        = nullptr;
+    VP_SURFACE *m_vebox3DLookUpTables2D                      = nullptr;
+    VP_SURFACE *m_vebox1DLookUpTables                        = nullptr;
+    VP_SURFACE *m_veboxDnHVSTables                           = nullptr;
+    VP_SURFACE *m_3DLutKernelCoefSurface                     = nullptr;       //!< Coef surface for 3DLut kernel.
     uint32_t    m_currentDnOutput                            = 0;
     uint32_t    m_currentStmmIndex                           = 0;
     uint32_t    m_veboxOutputCount                           = 2;             //!< PE on: 4 used. PE off: 2 used
@@ -520,6 +550,8 @@ protected:
     uint32_t    m_imageHeightOfPastHistogram                 = 0;
     uint32_t    m_imageWidthOfCurrentHistogram               = 0;
     uint32_t    m_imageHeightOfCurrentHistogram              = 0;
+    bool        m_isFcIntermediateSurfacePrepared            = false;
+    VP_SURFACE *m_fcIntermediateSurface[VP_NUM_FC_INTERMEDIA_SURFACES] = {}; // Ping-pong surface for multi-layer composition.
     std::vector<VP_SURFACE *> m_intermediaSurfaces;
     std::map<uint64_t, VP_SURFACE *> m_tempSurface; // allocation handle and surface pointer pair.
     // Pipe index for one DDI call.
@@ -532,7 +564,14 @@ protected:
     VP_SURFACE *m_veboxPwlfSurface[VP_NUM_LACE_PWLF_SURFACES] = {};            //!< VEBOX 1D LUT surface for Vebox Gen12
     VP_SURFACE *m_veboxWeitCoefSurface                        = nullptr;       //!< VEBOX 1D LUT surface for Vebox Gen12
     VP_SURFACE *m_veboxGlobalToneMappingCurveLUTSurface       = nullptr;       //!< VEBOX 1D LUT surface for Vebox Gen12
+    VP_SURFACE *m_temperalInput                               = nullptr;
 
+    // Fc Resource
+    VP_SURFACE *m_cmfcCoeff                                   = nullptr;
+
+    MediaUserSettingSharedPtr m_userSettingPtr = nullptr;   //!< usersettingInstance
+
+MEDIA_CLASS_DEFINE_END(vp__VpResourceManager)
 };
 }
 #endif // _VP_RESOURCE_MANAGER_H__

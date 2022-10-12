@@ -38,6 +38,25 @@ class VPFeatureManager;
 class SfcRenderBase;
 class VpKernelSet;
 
+struct VP_KERNEL_BINARY_ENTRY
+{
+    const uint32_t        *kernelBin    = nullptr;
+    uint32_t              kernelBinSize = 0;
+};
+
+struct VP_KERNEL_BINARY
+{
+    const uint32_t        *kernelBin           = nullptr;
+    uint32_t              kernelBinSize        = 0;
+    const uint32_t        *fcPatchKernelBin    = nullptr;
+    uint32_t              fcPatchKernelBinSize = 0;
+
+    const uint32_t        *isa3DLUTKernelBin      = nullptr;
+    uint32_t              isa3DLUTKernelSize      = 0;
+    const uint32_t        *isaHVSDenoiseKernelBin = nullptr;
+    uint32_t              isaHVSDenoiseKernelSize = 0;
+};
+
 class VpRenderKernel
 {
 public:
@@ -112,6 +131,8 @@ protected:
 
 public:
     const static std::string          s_kernelNameNonAdvKernels;
+
+MEDIA_CLASS_DEFINE_END(vp__VpRenderKernel)
 };
 
 using KERNEL_POOL = std::map<std::string, VpRenderKernel>;
@@ -120,10 +141,7 @@ class VpPlatformInterface
 {
 public:
 
-    VpPlatformInterface(PMOS_INTERFACE pOsInterface)
-    {
-        m_pOsInterface = pOsInterface;
-    }
+    VpPlatformInterface(PMOS_INTERFACE pOsInterface);
 
     virtual ~VpPlatformInterface();
 
@@ -198,19 +216,111 @@ public:
         return !m_vpMmcDisabled;
     }
 
+    virtual bool IsGpuContextCreatedInPipelineInit()
+    {
+        return true;
+    }
+
+    virtual MOS_STATUS GetInputFrameWidthHeightAlignUnit(
+        PVP_MHWINTERFACE          pvpMhwInterface,
+        uint32_t                 &widthAlignUnit,
+        uint32_t                 &heightAlignUnit,
+        bool                      bVdbox,
+        CODECHAL_STANDARD         codecStandard,
+        CodecDecodeJpegChromaType jpegChromaType);
+
+    virtual bool VeboxScalabilitywith4K(
+        VP_MHWINTERFACE           vpMhwInterface);
+
+    virtual MOS_STATUS GetVeboxHeapInfo(
+        PVP_MHWINTERFACE          pvpMhwInterface,
+        const MHW_VEBOX_HEAP    **ppVeboxHeap);
+
+    inline void SetMhwSfcItf(std::shared_ptr<mhw::sfc::Itf> sfcItf)
+    {
+        m_sfcItf = sfcItf;
+    }
+
+    inline void SetMhwVeboxItf(std::shared_ptr<mhw::vebox::Itf> veboxItf)
+    {
+        m_veboxItf = veboxItf;
+    }
+
+    inline void SetMhwRenderItf(std::shared_ptr<mhw::render::Itf> renderItf)
+    {
+        m_renderItf = renderItf;
+    }
+
+    inline void SetMhwMiItf(std::shared_ptr<mhw::mi::Itf> miItf)
+    {
+        m_miItf = miItf;
+    }
+
+    inline std::shared_ptr<mhw::sfc::Itf> GetMhwSfcItf()
+    {
+        return m_sfcItf;
+    }
+
+    inline std::shared_ptr<mhw::vebox::Itf> GetMhwVeboxItf()
+    {
+        return m_veboxItf;
+    }
+
+    inline std::shared_ptr<mhw::render::Itf> GetMhwRenderItf()
+    {
+        return m_renderItf;
+    }
+
+    inline std::shared_ptr<mhw::mi::Itf> GetMhwMiItf()
+    {
+        return m_miItf;
+    }
+
     virtual VpKernelConfig &GetKernelConfig() = 0;
 
     MOS_STATUS GetKernelParam(VpKernelID kernlId, RENDERHAL_KERNEL_PARAM &param);
+
+    void SetVpKernelBinary(
+                const uint32_t   *kernelBin,
+                uint32_t         kernelBinSize,
+                const uint32_t   *fcPatchKernelBin,
+                uint32_t         fcPatchKernelBinSize);
+    
+    void SetVpISAKernelBinary(
+                const uint32_t   *isa3DLUTKernelBin,
+                uint32_t         isa3DLUTKernelSize,
+                const uint32_t   *isaHVSDenoiseKernelBin,
+                uint32_t         isaHVSDenoiseKernelSize);
+
+    virtual void AddVpKernelEntryToList(
+                const uint32_t   *kernelBin,
+                uint32_t         kernelBinSize){}
+
     //only for get kernel binary in legacy path not being used in APO path.
     virtual MOS_STATUS GetKernelBinary(const void *&kernelBin, uint32_t &kernelSize, const void *&patchKernelBin, uint32_t &patchKernelSize);
 
+    virtual MOS_STATUS ConfigVirtualEngine() = 0;
+
+    virtual bool IsEufusionBypassWaEnabled()
+    {
+        return false;
+    }
+
 protected:
     PMOS_INTERFACE m_pOsInterface = nullptr;
+    VP_KERNEL_BINARY m_vpKernelBinary = {};                 //!< vp kernels
     KERNEL_POOL    m_kernelPool;
     void (*m_modifyKdllFunctionPointers)(PKdll_State) = nullptr;
     bool m_sfc2PassScalingEnabled = false;
     bool m_sfc2PassScalingPerfMode = false;
     bool m_vpMmcDisabled = false;
+    MediaUserSettingSharedPtr m_userSettingPtr  = nullptr;  //!< usersettingInstance
+    std::shared_ptr<mhw::vebox::Itf>        m_veboxItf  = nullptr;
+    std::shared_ptr<mhw::sfc::Itf>          m_sfcItf    = nullptr;
+    std::shared_ptr<mhw::render::Itf>       m_renderItf = nullptr;
+    std::shared_ptr<mhw::mi::Itf>           m_miItf     = nullptr;
+
+    MEDIA_CLASS_DEFINE_END(vp__VpPlatformInterface)
 };
 
 }

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017, Intel Corporation
+* Copyright (c) 2017-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -38,6 +38,7 @@
 #define CODECHAL_ENCODE_AVC_INIT_DSH_SIZE                   MHW_PAGE_SIZE * 3
 #define CODECHAL_ENCODE_AVC_MAX_SLICE_QP                    (CODEC_AVC_NUM_QP - 1) // 0 - 51 inclusive
 #define CODECHAL_ENCODE_AVC_MIN_ICQ_QUALITYFACTOR           1
+#define CODECHAL_ENCODE_AVC_VDENC_MIN_ICQ_QUALITYFACTOR     11
 #define CODECHAL_ENCODE_AVC_MAX_ICQ_QUALITYFACTOR           51
 #define CODECHAL_ENCODE_AVC_MAX_SLICES_SUPPORTED            256
 #define CODECHAL_ENCODE_AVC_DEFAULT_AVBR_ACCURACY           30
@@ -1613,6 +1614,15 @@ public:
         MhwMiInterface                 *miInterface,
         PMOS_COMMAND_BUFFER            cmdBuffer,
         uint32_t                       currPass);
+
+    virtual MOS_STATUS AddMfxAvcSlice(
+        PMOS_COMMAND_BUFFER        cmdBuffer,
+        PMHW_BATCH_BUFFER          batchBuffer,
+        PMHW_VDBOX_AVC_SLICE_STATE avcSliceState);
+
+    virtual MOS_STATUS AddVdencSliceStateCmd(
+        PMOS_COMMAND_BUFFER        cmdBuffer,
+        PMHW_VDBOX_AVC_SLICE_STATE params);
 
 #if USE_CODECHAL_DEBUG_TOOL
     MOS_STATUS DumpSeqParams(

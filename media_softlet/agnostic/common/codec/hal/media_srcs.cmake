@@ -1,4 +1,4 @@
-# Copyright (c) 2020, Intel Corporation
+# Copyright (c) 2020-2022, Intel Corporation
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the "Software"),
@@ -18,5 +18,53 @@
 # ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
+set(TMP_HEADERS_
+    ${CMAKE_CURRENT_LIST_DIR}/codechal_setting.h
+    ${CMAKE_CURRENT_LIST_DIR}/codechal_common.h
+    ${CMAKE_CURRENT_LIST_DIR}/codechal_debug.h
+    ${CMAKE_CURRENT_LIST_DIR}/codechal_oca_debug.h
+    ${CMAKE_CURRENT_LIST_DIR}/codechal_debug_config_manager.h
+)
+
+set(TMP_1_SOURCES_
+    ${CMAKE_CURRENT_LIST_DIR}/codechal_common.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/codechal_debug.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/codechal_oca_debug.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/codechal_debug_config_manager.cpp
+)
+
+if(NOT "${Media_Reserved}" STREQUAL "yes")
+    set(TMP_1_SOURCES_
+            ${TMP_1_SOURCES_}
+            ${CMAKE_CURRENT_LIST_DIR}/codechal_setting.cpp
+       )
+endif()
+
+set(SOURCES_
+    ${SOURCES_}
+    ${TMP_1_SOURCES_}
+)
+
+set(HEADERS_
+    ${HEADERS_}
+    ${TMP_HEADERS_}
+)
+
+set(CODEC_HEADERS_
+    ${CODEC_HEADERS_}
+    ${TMP_HEADERS_}
+)
+
+set(CODEC_SOURCES_
+    ${CODEC_SOURCES_}
+    ${TMP_1_SOURCES_}
+)
+
+source_group( "CodecHal\\Common" FILES ${TMP_1_SOURCES_} ${TMP_HEADERS_} )
+set(TMP_1_SOURCES_ "")
+set(TMP_HEADERS_ "")
+media_add_curr_to_include_path()
+
 media_include_subdirectory(dec)
 media_include_subdirectory(enc)
+media_include_subdirectory(shared)

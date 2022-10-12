@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020-2021, Intel Corporation
+* Copyright (c) 2020-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -30,6 +30,16 @@
 using namespace vp;
 
 const std::string VpRenderKernel::s_kernelNameNonAdvKernels = "vpFcKernels";
+
+VpPlatformInterface::VpPlatformInterface(PMOS_INTERFACE pOsInterface)
+{
+    m_pOsInterface = pOsInterface;
+    if (m_pOsInterface)
+    {
+        m_userSettingPtr = m_pOsInterface->pfnGetUserSettingInstance(m_pOsInterface);
+    }
+    VpUtils::DeclareUserSettings(m_userSettingPtr);
+}
 
 MOS_STATUS VpRenderKernel::InitVPKernel(
     const Kdll_RuleEntry *kernelRules,
@@ -92,6 +102,10 @@ MOS_STATUS VpRenderKernel::InitVPKernel(
         VP_RENDER_ASSERTMESSAGE("Failed to allocate KDLL state.");
         MOS_SafeFreeMemory(pKernelBin);
         MOS_SafeFreeMemory(pFcPatchBin);
+    }
+    else
+    {
+        KernelDll_SetupFunctionPointers_Ext(m_kernelDllState);
     }
 
     SetKernelName(VpRenderKernel::s_kernelNameNonAdvKernels);
@@ -173,6 +187,8 @@ MOS_STATUS VpPlatformInterface::InitPolicyRules(VP_POLICY_RULES &rules)
     {
         rules.sfcMultiPassSupport.scaling.enable = false;
     }
+
+    rules.isAvsSamplerSupported = false;
 
     return MOS_STATUS_SUCCESS;
 }
@@ -257,10 +273,13 @@ MOS_STATUS VpPlatformInterface::InitVpCmKernels(
     }
 
     vISA::Header *header = isaFile->getHeader();
+    VP_PUBLIC_CHK_NULL_RETURN(header);
 
     for (uint32_t i = 0; i < header->getNumKernels(); i++)
     {
         vISA::Kernel *kernel = header->getKernelInfo()[i];
+
+        VP_PUBLIC_CHK_NULL_RETURN(kernel);
 
         if (kernel->getName() == nullptr || kernel->getNameLen() < 1 || kernel->getNameLen() > 256)
         {
@@ -285,6 +304,8 @@ MOS_STATUS VpPlatformInterface::InitVpCmKernels(
         vpKernel.SetKernelBinSize(genBinary->getBinarySize());
 
         vISA::KernelBody *kernelBody = isaFile->getKernelsData().at(i);
+        VP_PUBLIC_CHK_NULL_RETURN(kernelBody);
+
         if (kernelBody->getNumInputs() > CM_MAX_ARGS_PER_KERNEL)
         {
             return MOS_STATUS_INVALID_PARAMETER;
@@ -294,6 +315,7 @@ MOS_STATUS VpPlatformInterface::InitVpCmKernels(
         {
             KRN_ARG          kernelArg = {};
             vISA::InputInfo *inputInfo = kernelBody->getInputInfo()[j];
+            VP_PUBLIC_CHK_NULL_RETURN(inputInfo);
             uint8_t          kind      = inputInfo->getKind();
 
             if (kind == 0x2)  // compiler value for surface
@@ -368,6 +390,34 @@ MOS_STATUS VpPlatformInterface::GetKernelParam(VpKernelID kernlId, RENDERHAL_KER
     return MOS_STATUS_SUCCESS;
 }
 
+void VpPlatformInterface::SetVpKernelBinary(
+                const uint32_t   *kernelBin,
+                uint32_t         kernelBinSize,
+                const uint32_t   *fcPatchKernelBin,
+                uint32_t         fcPatchKernelBinSize)
+{
+    VP_FUNC_CALL();
+    
+    m_vpKernelBinary.kernelBin            = kernelBin;
+    m_vpKernelBinary.kernelBinSize        = kernelBinSize;
+    m_vpKernelBinary.fcPatchKernelBin     = fcPatchKernelBin;
+    m_vpKernelBinary.fcPatchKernelBinSize = fcPatchKernelBinSize;
+}
+
+void VpPlatformInterface::SetVpISAKernelBinary(
+                const uint32_t   *isa3DLUTKernelBin,
+                uint32_t         isa3DLUTKernelSize,
+                const uint32_t   *isaHVSDenoiseKernelBin,
+                uint32_t         isaHVSDenoiseKernelSize)
+{
+    VP_FUNC_CALL();
+    
+    m_vpKernelBinary.isa3DLUTKernelBin       = isa3DLUTKernelBin;
+    m_vpKernelBinary.isa3DLUTKernelSize      = isa3DLUTKernelSize;
+    m_vpKernelBinary.isaHVSDenoiseKernelBin  = isaHVSDenoiseKernelBin;
+    m_vpKernelBinary.isaHVSDenoiseKernelSize = isaHVSDenoiseKernelSize;
+}
+
 //only for get kernel binary in legacy path not being used in APO path.
 MOS_STATUS VpPlatformInterface ::GetKernelBinary(const void *&kernelBin, uint32_t &kernelSize, const void *&patchKernelBin, uint32_t &patchKernelSize)
 {
@@ -379,4 +429,51 @@ MOS_STATUS VpPlatformInterface ::GetKernelBinary(const void *&kernelBin, uint32_
     patchKernelSize = 0;
 
     return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpPlatformInterface::GetInputFrameWidthHeightAlignUnit(
+    PVP_MHWINTERFACE          pvpMhwInterface,
+    uint32_t                 &widthAlignUnit,
+    uint32_t                 &heightAlignUnit,
+    bool                      bVdbox,
+    CODECHAL_STANDARD         codecStandard,
+    CodecDecodeJpegChromaType jpegChromaType)
+{
+    VP_FUNC_CALL();
+
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+    VP_PUBLIC_CHK_NULL_RETURN(m_sfcItf);
+    VP_PUBLIC_CHK_STATUS_RETURN(m_sfcItf->GetInputFrameWidthHeightAlignUnit(widthAlignUnit, heightAlignUnit, bVdbox, codecStandard, jpegChromaType));
+
+    return eStatus;
+}
+
+MOS_STATUS VpPlatformInterface::GetVeboxHeapInfo(
+    PVP_MHWINTERFACE          pvpMhwInterface,
+    const MHW_VEBOX_HEAP    **ppVeboxHeap)
+{
+    VP_FUNC_CALL();
+
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+    const MHW_VEBOX_HEAP *pVeboxHeap = nullptr;
+    VP_PUBLIC_CHK_NULL_RETURN(m_veboxItf);
+
+    VP_RENDER_CHK_STATUS_RETURN(m_veboxItf->GetVeboxHeapInfo(
+        &pVeboxHeap));
+    *ppVeboxHeap = (const MHW_VEBOX_HEAP *)pVeboxHeap;
+
+    return eStatus;
+}
+
+bool VpPlatformInterface::VeboxScalabilitywith4K(
+    VP_MHWINTERFACE          vpMhwInterface)
+{
+    if (m_veboxItf && !(m_veboxItf->IsVeboxScalabilitywith4K()))
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }

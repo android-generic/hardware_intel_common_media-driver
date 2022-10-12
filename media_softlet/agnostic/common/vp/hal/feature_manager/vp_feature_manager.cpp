@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2021, Intel Corporation
+* Copyright (c) 2019-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -170,6 +170,14 @@ MOS_STATUS VpFeatureManagerNext::RegisterFeatures()
     VP_PUBLIC_CHK_NULL_RETURN(p);
     m_featureHandler.insert(std::make_pair(FeatureTypeDi, p));
 
+    p = MOS_New(SwFilterLumakeyHandler, m_vpInterface, FeatureTypeLumakey);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_featureHandler.insert(std::make_pair(FeatureTypeLumakey, p));
+
+    p = MOS_New(SwFilterBlendingHandler, m_vpInterface, FeatureTypeBlending);
+    VP_PUBLIC_CHK_NULL_RETURN(p);
+    m_featureHandler.insert(std::make_pair(FeatureTypeBlending, p));
+
     p = MOS_New(SwFilterColorFillHandler, m_vpInterface, FeatureTypeColorFill);
     VP_PUBLIC_CHK_NULL_RETURN(p);
     m_featureHandler.insert(std::make_pair(FeatureTypeColorFill, p));
@@ -190,8 +198,8 @@ MOS_STATUS VpFeatureManagerNext::UnregisterFeatures()
     {
         auto it = m_featureHandler.begin();
         SwFilterFeatureHandler* p = it->second;
-        m_featureHandler.erase(it);
         MOS_Delete(p);
+        m_featureHandler.erase(it);
     }
     m_isFeatureRegistered = false;
     return MOS_STATUS_SUCCESS;
@@ -206,7 +214,10 @@ VPFeatureManager::VPFeatureManager(
     MediaFeatureManager(),
     m_hwInterface(hwInterface)
 {
-
+    if (m_hwInterface && m_hwInterface->m_osInterface)
+    {
+        m_userSettingPtr = m_hwInterface->m_osInterface->pfnGetUserSettingInstance(m_hwInterface->m_osInterface);
+    }
 }
 
 MOS_STATUS VPFeatureManager::CheckFeatures(void * params, bool &bApgFuncSupported)
@@ -214,24 +225,27 @@ MOS_STATUS VPFeatureManager::CheckFeatures(void * params, bool &bApgFuncSupporte
     VP_FUNC_CALL();
 
     VP_PUBLIC_CHK_NULL_RETURN(params);
+    VP_PUBLIC_CHK_NULL_RETURN(m_hwInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(m_hwInterface->m_osInterface);
 
     PVP_PIPELINE_PARAMS pvpParams = (PVP_PIPELINE_PARAMS)params;
     bApgFuncSupported = false;
 
-    // APG only support single frame input/output
-    if (pvpParams->uSrcCount != 1 ||
-        pvpParams->uDstCount != 1)
+    if (!m_hwInterface->m_osInterface->apoMosEnabled)
     {
+        VP_PUBLIC_NORMALMESSAGE("Fallback to legacy since APO mos not enabled.");
+        return MOS_STATUS_SUCCESS;
+    }
+
+    // Color fill does not need to check src params.
+    if (0 == pvpParams->uSrcCount)
+    {
+        bApgFuncSupported = true;
         return MOS_STATUS_SUCCESS;
     }
 
     VP_PUBLIC_CHK_NULL_RETURN(pvpParams->pSrc[0]);
     VP_PUBLIC_CHK_NULL_RETURN(pvpParams->pTarget[0]);
-
-    if (pvpParams->pSrc[0]->SurfType != SURF_IN_PRIMARY)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
 
     // align rectangle of surface
     VP_PUBLIC_CHK_STATUS_RETURN(RectSurfaceAlignment(pvpParams->pSrc[0], pvpParams->pTarget[0]->Format));
@@ -246,39 +260,14 @@ MOS_STATUS VPFeatureManager::CheckFeatures(void * params, bool &bApgFuncSupporte
         return MOS_STATUS_SUCCESS;
     }
 
-    // WA: Force NV12 16K to render
-    if (pvpParams->pTarget[0]->Format == Format_NV12 && pvpParams->pTarget[0]->dwHeight > VPHAL_RNDR_16K_HEIGHT_LIMIT)
+    bool isHdrNeeded = IsHdrNeeded(pvpParams->pSrc[0], pvpParams->pTarget[0]);
+    if (isHdrNeeded && IsCroppingNeeded(pvpParams->pSrc[0]))
     {
-        VPHAL_RENDER_NORMALMESSAGE("Disable VEBOX/SFC for NV12 16k resolution");
+        VP_PUBLIC_NORMALMESSAGE("Disable APO Path for HDR Cropping");
         return MOS_STATUS_SUCCESS;
     }
 
-    if (IsHdrNeeded(pvpParams->pSrc[0], pvpParams->pTarget[0]))
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-
-    // Check whether VEBOX is available
-    // VTd doesn't support VEBOX
-    if (!MEDIA_IS_SKU(m_hwInterface->m_skuTable, FtrVERing))
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-
-    // Check if the Surface size is greater than 64x16 which is the minimum Width and Height VEBOX can handle
-    if (pvpParams->pSrc[0]->dwWidth < MHW_VEBOX_MIN_WIDTH || pvpParams->pSrc[0]->dwHeight < MHW_VEBOX_MIN_HEIGHT)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-
-    if (pvpParams->pSrc[0]->pBlendingParams                 ||
-        pvpParams->pSrc[0]->pLumaKeyParams                  ||
-        pvpParams->pConstriction)
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-
-    if (pvpParams->pSrc[0]->bInterlacedScaling && !IsSfcInterlacedScalingSupported())
+    if (pvpParams->pConstriction)
     {
         return MOS_STATUS_SUCCESS;
     }
@@ -287,41 +276,15 @@ MOS_STATUS VPFeatureManager::CheckFeatures(void * params, bool &bApgFuncSupporte
     if (pvpParams->pSrc[0]->pDenoiseParams                       &&
         pvpParams->pSrc[0]->pDenoiseParams->bEnableHVSDenoise)
     {
+        VP_PUBLIC_NORMALMESSAGE("Disable APO Path for HVS.");
         return MOS_STATUS_SUCCESS;
     }
 
-    if (Is2PassesCSCNeeded(pvpParams->pSrc[0], pvpParams->pTarget[0]))
+    // Disable FP16 mode in APO path.
+    bool bFP16 = IS_RGB64_FLOAT_FORMAT(pvpParams->pTarget[0]->Format) || IS_RGB64_FLOAT_FORMAT(pvpParams->pSrc[0]->Format);
+    if (bFP16)
     {
-        return MOS_STATUS_SUCCESS;
-    }
-
-    // Temp removed RGB input with DN/DI/IECP case
-    if ((IS_RGB_FORMAT(pvpParams->pSrc[0]->Format)) &&
-        (pvpParams->pSrc[0]->pColorPipeParams))
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-
-    if (!IsVeboxOutFeasible(pvpParams) &&
-        !IsSfcOutputFeasible(pvpParams))
-    {
-        return MOS_STATUS_SUCCESS;
-    }
-
-    bool bVeboxNeeded = IsVeboxSupported(pvpParams);
-    // If ScalingPreference == VPHAL_SCALING_PREFER_SFC_FOR_VEBOX, use SFC only when VEBOX is required
-    // For GEN12+, IEF has been removed from AVS sampler. Do not change the path if IEF is enabled.
-    if ((pvpParams->pSrc[0]->ScalingPreference == VPHAL_SCALING_PREFER_SFC_FOR_VEBOX) &&
-        (pvpParams->pSrc[0]->pIEFParams == nullptr || (pvpParams->pSrc[0]->pIEFParams && pvpParams->pSrc[0]->pIEFParams->bEnabled == false)) &&
-        (bVeboxNeeded == false))
-    {
-        VP_PUBLIC_NORMALMESSAGE("DDI choose to use SFC only for VEBOX, and since VEBOX is not required, change to Composition.");
-        return MOS_STATUS_SUCCESS;
-    }
-
-    if (pvpParams->pSrc[0]->ScalingPreference == VPHAL_SCALING_PREFER_COMP)
-    {
-        VP_PUBLIC_NORMALMESSAGE("DDI choose to use Composition, change to Composition.");
+        VP_PUBLIC_NORMALMESSAGE("Disable FP16 mode in APO path.");
         return MOS_STATUS_SUCCESS;
     }
 
@@ -336,6 +299,25 @@ MOS_STATUS VPFeatureManager::CheckFeatures(void * params)
 
     bool bApgFuncSupported = false;
     return CheckFeatures(params, bApgFuncSupported);
+}
+
+bool VPFeatureManager::IsCroppingNeeded(
+    PVPHAL_SURFACE pSrc)
+{
+    VP_FUNC_CALL();
+
+    if (!pSrc)
+    {
+        return false;
+    }
+    bool bCropping = false;
+    // use comp for cropping
+    if (pSrc->rcSrc.left != 0 || pSrc->rcDst.left != 0 ||
+        pSrc->rcSrc.top != 0 || pSrc->rcDst.top != 0)
+    {
+        bCropping = true;
+    }
+    return bCropping;
 }
 
 bool VPFeatureManager::IsHdrNeeded(
@@ -443,25 +425,21 @@ bool VPFeatureManager::IsVeboxOutFeasible(
 
     // Vebox Comp Bypass is on by default
     uint32_t dwCompBypassMode = VP_COMP_BYPASS_DISABLED;
+    uint32_t customValue    = VP_COMP_BYPASS_ENABLED;
 
     VP_PUBLIC_CHK_NULL_NO_STATUS(params);
     VP_PUBLIC_CHK_NULL_NO_STATUS(params->pSrc[0]);
     VP_PUBLIC_CHK_NULL_NO_STATUS(params->pTarget[0]);
 
-    MOS_USER_FEATURE_VALUE_DATA UserFeatureData;
     // Read user feature key to get the Composition Bypass mode
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    UserFeatureData.i32DataFlag = MOS_USER_FEATURE_VALUE_DATA_FLAG_CUSTOM_DEFAULT_VALUE_TYPE;
-
     // Vebox Comp Bypass is on by default
-    UserFeatureData.u32Data = VP_COMP_BYPASS_ENABLED;
-
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_BYPASS_COMPOSITION_ID,
-        &UserFeatureData,
-        m_hwInterface->m_osInterface->pOsContext));
-    dwCompBypassMode = UserFeatureData.u32Data;
+    ReadUserSetting(
+        m_userSettingPtr,
+        dwCompBypassMode,
+        __VPHAL_BYPASS_COMPOSITION,
+        MediaUserSetting::Group::Sequence,
+        customValue,
+        true);
 
     if (dwCompBypassMode != VP_COMP_BYPASS_DISABLED                            &&
         params->uDstCount ==1                                                  &&
@@ -592,13 +570,17 @@ bool VPFeatureManager::IsSfcOutputFeasible(PVP_PIPELINE_PARAMS params)
     uint32_t                    dwSfcMaxHeight = 0;
     uint32_t                    dwSfcMinWidth = 0;
     uint32_t                    dwSfcMinHeight = 0;
-    uint32_t                    dwDstMinHeight = 0;
     uint16_t                    wWidthAlignUnit = 0;
     uint16_t                    wHeightAlignUnit = 0;
     uint32_t                    dwSourceRegionWidth = 0;
     uint32_t                    dwSourceRegionHeight = 0;
     uint32_t                    dwOutputRegionWidth = 0;
     uint32_t                    dwOutputRegionHeight = 0;
+    uint32_t                    dwTargetMinWidth     = 0;
+    uint32_t                    dwTargetMinHeight    = 0;
+    uint32_t                    dwOutputMinWidth     = 0;
+    uint32_t                    dwOutputMinHeight    = 0;
+    bool                        isInterlaced         = false;
     bool                        bRet = false;
     float                       fScaleX = 0.0f, fScaleY = 0.0f;
     float                       minRatio = 0.125f, maxRatio = 8.0f;
@@ -611,15 +593,11 @@ bool VPFeatureManager::IsSfcOutputFeasible(PVP_PIPELINE_PARAMS params)
     if (MEDIA_IS_SKU(m_hwInterface->m_skuTable, FtrSFCPipe))
     {
         // Read user feature key to Disable SFC
-        MOS_USER_FEATURE_VALUE_DATA UserFeatureData;
-        MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-        MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-            nullptr,
-            __VPHAL_VEBOX_DISABLE_SFC_ID,
-            &UserFeatureData,
-            m_hwInterface->m_osInterface->pOsContext));
-
-        disableSFC = UserFeatureData.bData ? true : false;
+        ReadUserSetting(
+            m_userSettingPtr,
+            disableSFC,
+            __VPHAL_VEBOX_DISABLE_SFC,
+            MediaUserSetting::Group::Sequence);
 
         if (disableSFC)
         {
@@ -650,18 +628,6 @@ bool VPFeatureManager::IsSfcOutputFeasible(PVP_PIPELINE_PARAMS params)
     dwSfcMinHeight      = MHW_SFC_MIN_HEIGHT;
     wWidthAlignUnit     = 1;
     wHeightAlignUnit    = 1;
-
-    switch (params->pSrc[0]->InterlacedScalingType)
-    {
-    case ISCALING_INTERLEAVED_TO_FIELD:
-        dwDstMinHeight = dwSfcMinHeight / 2;
-        break;
-    case ISCALING_FIELD_TO_INTERLEAVED:
-        dwDstMinHeight = dwSfcMinHeight * 2;
-        break;
-    default:
-        dwDstMinHeight = dwSfcMinHeight;
-    }
 
     // Apply alignment restriction to the source and scaled regions.
     switch (params->pTarget[0]->Format)
@@ -694,18 +660,63 @@ bool VPFeatureManager::IsSfcOutputFeasible(PVP_PIPELINE_PARAMS params)
         (uint32_t)(params->pSrc[0]->rcDst.right - params->pSrc[0]->rcDst.left),
         wWidthAlignUnit);
 
-    if (OUT_OF_BOUNDS(params->pSrc[0]->dwWidth, dwSfcMinWidth, dwSfcMaxWidth)    ||
-        OUT_OF_BOUNDS(params->pSrc[0]->dwHeight, dwSfcMinHeight, dwSfcMaxHeight) ||
-        OUT_OF_BOUNDS(dwSourceRegionWidth, dwSfcMinWidth, dwSfcMaxWidth)         ||
-        OUT_OF_BOUNDS(dwSourceRegionHeight, dwSfcMinHeight, dwSfcMaxHeight)      ||
-        OUT_OF_BOUNDS(dwOutputRegionWidth, dwSfcMinWidth, dwSfcMaxWidth)         ||
-        OUT_OF_BOUNDS(dwOutputRegionHeight, dwDstMinHeight, dwSfcMaxHeight)      ||
-        OUT_OF_BOUNDS(params->pTarget[0]->dwWidth, dwSfcMinWidth, dwSfcMaxWidth) ||
-        OUT_OF_BOUNDS(params->pTarget[0]->dwHeight, dwDstMinHeight, dwSfcMaxHeight))
+    dwTargetMinWidth  = dwSfcMinWidth;
+    dwTargetMinHeight = dwSfcMinHeight;
+    dwOutputMinWidth  = dwSfcMinWidth;
+    dwOutputMinHeight = dwSfcMinHeight;
+    switch (params->pSrc[0]->InterlacedScalingType)
     {
-        VPHAL_RENDER_NORMALMESSAGE("Surface dimensions not supported by SFC Pipe.");
+    case ISCALING_INTERLEAVED_TO_INTERLEAVED:
+        isInterlaced      = true;
+        break;
+    case ISCALING_FIELD_TO_INTERLEAVED:
+        dwTargetMinWidth  = dwSfcMinWidth * 2;
+        dwTargetMinHeight = dwSfcMinHeight * 2;
+        isInterlaced      = true;
+        break;
+    case ISCALING_INTERLEAVED_TO_FIELD:
+        dwOutputMinWidth  = dwSfcMinWidth / 2;
+        dwOutputMinHeight = dwSfcMinHeight / 2;
+        dwTargetMinWidth  = dwSfcMinWidth / 2;
+        dwTargetMinHeight = dwSfcMinHeight / 2;
+        isInterlaced      = true;
+        break;
+    default:
+        isInterlaced      = false;
+        break;
+    }
+
+    if (OUT_OF_BOUNDS(params->pSrc[0]->dwWidth, dwSfcMinWidth, dwSfcMaxWidth)       ||
+        OUT_OF_BOUNDS(params->pSrc[0]->dwHeight, dwSfcMinHeight, dwSfcMaxHeight)    ||
+        OUT_OF_BOUNDS(dwSourceRegionWidth, dwSfcMinWidth, dwSfcMaxWidth)            ||
+        OUT_OF_BOUNDS(dwSourceRegionHeight, dwSfcMinHeight, dwSfcMaxHeight)         ||
+        OUT_OF_BOUNDS(dwOutputRegionWidth, dwOutputMinWidth, dwSfcMaxWidth)         ||
+        OUT_OF_BOUNDS(dwOutputRegionHeight, dwOutputMinHeight, dwSfcMaxHeight)      ||
+        OUT_OF_BOUNDS(params->pTarget[0]->dwWidth, dwTargetMinWidth, dwSfcMaxWidth) ||
+        OUT_OF_BOUNDS(params->pTarget[0]->dwHeight, dwTargetMinHeight, dwSfcMaxHeight))
+    {
+        VPHAL_RENDER_NORMALMESSAGE("Surface dimensions not supported by SFC Pipe");
         bRet = false;
         return bRet;
+    }
+    if (isInterlaced)
+    {
+        if (params->pSrc[0]->Rotation != VPHAL_ROTATION_IDENTITY)
+        {
+            VPHAL_RENDER_NORMALMESSAGE("Interlaced scaling cannot support rotate or mirror by SFC pipe.");
+            bRet = false;
+            return bRet;
+        }
+
+        if (params->pSrc[0]->rcSrc.left != 0 ||
+            params->pSrc[0]->rcSrc.top  != 0 ||
+            params->pSrc[0]->rcDst.left != 0 ||
+            params->pSrc[0]->rcDst.top  != 0)
+        {
+            VPHAL_RENDER_NORMALMESSAGE("Interlaced scaling cannot support offset by SFC pipe.");
+            bRet = false;
+            return bRet;
+        }
     }
 
     // Size of the Output Region over the Render Target
@@ -727,8 +738,16 @@ bool VPFeatureManager::IsSfcOutputFeasible(PVP_PIPELINE_PARAMS params)
         params->pSrc[0]->Rotation == VPHAL_MIRROR_HORIZONTAL ||
         params->pSrc[0]->Rotation == VPHAL_MIRROR_VERTICAL)
     {
-        fScaleX = (float)dwOutputRegionWidth / (float)dwSourceRegionWidth;
-        fScaleY = (float)dwOutputRegionHeight / (float)dwSourceRegionHeight;
+        if (params->pSrc[0]->InterlacedScalingType == ISCALING_INTERLEAVED_TO_FIELD)
+        {
+            fScaleX = (float)dwOutputRegionWidth / (float)dwSourceRegionWidth;
+            fScaleY = (float)dwOutputRegionHeight * 2.0F / (float)dwSourceRegionHeight;
+        }
+        else
+        {
+            fScaleX = (float)dwOutputRegionWidth / (float)dwSourceRegionWidth;
+            fScaleY = (float)dwOutputRegionHeight / (float)dwSourceRegionHeight;
+        }
     }
     else
     {
@@ -947,10 +966,10 @@ MOS_STATUS VPFeatureManager::RectSurfaceAlignment(
 {
     VP_FUNC_CALL();
 
-    uint16_t   wWidthAlignUnit;
-    uint16_t   wHeightAlignUnit;
-    uint16_t   wWidthAlignUnitForDstRect;
-    uint16_t   wHeightAlignUnitForDstRect;
+    uint16_t   wWidthAlignUnit            = 0;
+    uint16_t   wHeightAlignUnit           = 0;
+    uint16_t   wWidthAlignUnitForDstRect  = 0;
+    uint16_t   wHeightAlignUnitForDstRect = 0;
     MOS_STATUS eStatus;
 
     eStatus = MOS_STATUS_SUCCESS;

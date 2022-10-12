@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2019, Intel Corporation
+* Copyright (c) 2011-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -140,34 +140,14 @@ static MOS_USER_FEATURE_VALUE MOSUserFeatureValueDescFields_g12[MOS_NUM_USER_FEA
         MOS_USER_FEATURE_VALUE_TYPE_BOOL,
         "0",
         "HEVC Vme encode G12HP enable render context. (Default 0)"),
-    /* VP gen12 based */
-    MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_SFC_OUTPUT_CENTERING_DISABLE_ID_G12,
-        "SFC Output Centering Disable",
-        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
-        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
-        "VP",
-        MOS_USER_FEATURE_TYPE_USER,
-        MOS_USER_FEATURE_VALUE_TYPE_INT32,
-        "0",
-        "Disabling SFC Centering output. 1 -- Disable, 0 -- Enable."),
-     MOS_DECLARE_UF_KEY(__MEDIA_USER_FEATURE_VALUE_SFC_OUTPUT_DTR_DISABLE_ID_G12,
-        "Disable SFC DTR",
-        __MEDIA_USER_FEATURE_SUBKEY_INTERNAL,
-        __MEDIA_USER_FEATURE_SUBKEY_REPORT,
-        "VP",
-        MOS_USER_FEATURE_TYPE_USER,
-        MOS_USER_FEATURE_VALUE_TYPE_UINT32,
-        "1",
-        "Disabling SFC DTR output. 1: Disable, 0: Enable."),
 };
 
 MediaUserSettingsMgr_g12::MediaUserSettingsMgr_g12()
 {
-    MOS_STATUS eStatus = MOS_DeclareUserFeatureKeysFromDescFields(
+    MOS_STATUS eStatus = MosUtilities::MosDeclareUserFeatureKeysFromDescFields(
         MOSUserFeatureValueDescFields_g12,
         MOS_NUM_USER_FEATURE_VALUES_G12,
-        __MOS_USER_FEATURE_KEY_G12_MAX_ID,
-        nullptr);
+        __MOS_USER_FEATURE_KEY_G12_MAX_ID);
 
     if (MOS_FAILED(eStatus))
     {
@@ -179,11 +159,10 @@ MediaUserSettingsMgr_g12::MediaUserSettingsMgr_g12()
 MediaUserSettingsMgr_g12::~MediaUserSettingsMgr_g12()
 {
 
-    MOS_STATUS eStatus = MOS_DestroyUserFeatureKeysFromDescFields(
+    MOS_STATUS eStatus = MosUtilities::MosDestroyUserFeatureKeysFromDescFields(
         MOSUserFeatureValueDescFields_g12,
         MOS_NUM_USER_FEATURE_VALUES_G12,
-        __MOS_USER_FEATURE_KEY_G12_MAX_ID,
-        nullptr);
+        __MOS_USER_FEATURE_KEY_G12_MAX_ID);
 
     if (MOS_FAILED(eStatus))
     {

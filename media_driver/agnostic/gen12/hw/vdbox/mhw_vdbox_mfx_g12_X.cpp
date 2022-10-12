@@ -27,6 +27,7 @@
 #include "mhw_mi_hwcmd_g12_X.h"
 #include "mos_os.h"
 #include "mhw_mmio_g12.h"
+#include "hal_oca_interface.h"
 
 #define GEN12_AVC_MPR_ROWSTORE_BASEADDRESS                                    256
 #define GEN12_AVC_MPR_ROWSTORE_BASEADDRESS_MBAFF                              512
@@ -718,8 +719,17 @@ MOS_STATUS MhwVdboxMfxInterfaceG12::AddMfxSurfaceCmd(
     mhw_vdbox_mfx_g12_X::MFX_SURFACE_STATE_CMD cmd;
     cmd.DW1.SurfaceId = params->ucSurfaceStateId;
 
-    cmd.DW2.Height = params->psSurface->dwHeight - 1;
-    cmd.DW2.Width = params->psSurface->dwWidth - 1;
+    // Take actual height/width from SPS in case of AVC encode and source surface
+    if (params->Mode == CODECHAL_ENCODE_MODE_AVC && params->ucSurfaceStateId == CODECHAL_MFX_SRC_SURFACE_ID)
+    {
+        cmd.DW2.Height = params->dwActualHeight - 1;
+        cmd.DW2.Width  = params->dwActualWidth - 1;
+    }
+    else
+    {
+        cmd.DW2.Height = params->psSurface->dwHeight - 1;
+        cmd.DW2.Width  = params->psSurface->dwWidth - 1;
+    }
 
     cmd.DW3.TileWalk = mhw_vdbox_mfx_g12_X::MFX_SURFACE_STATE_CMD::TILE_WALK_YMAJOR;
     cmd.DW3.TiledSurface = 1;
@@ -1093,6 +1103,18 @@ MOS_STATUS MhwVdboxMfxInterfaceG12::AddMfxPipeBufAddrCmd(
             &resourceParams));
     }
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    if (m_decodeInUse)
+    {
+        uint32_t mmcEnable = params->psPreDeblockSurface ? cmd.DW3.PreDeblockingMemoryCompressionEnable : cmd.DW6.PostDeblockingMemoryCompressionEnable;
+        if (mmcEnable && !bMMCReported)
+        {
+            MOS_TraceEvent(EVENT_DECODE_FEATURE_MMC, EVENT_TYPE_INFO, NULL, 0, NULL, 0);
+            bMMCReported = true;
+        }
+    }
+#endif
+
     MHW_MI_CHK_STATUS(Mos_AddCommand(cmdBuffer, &cmd, sizeof(cmd)));
 
     return eStatus;
@@ -1108,6 +1130,9 @@ MOS_STATUS MhwVdboxMfxInterfaceG12::AddMfxIndObjBaseAddrCmd(
 
     MHW_MI_CHK_NULL(cmdBuffer);
     MHW_MI_CHK_NULL(params);
+
+    PMOS_CONTEXT pOsContext = m_osInterface->pOsContext;
+    MHW_MI_CHK_NULL(pOsContext);
 
     MHW_RESOURCE_PARAMS resourceParams;
     MOS_ZeroMemory(&resourceParams, sizeof(resourceParams));
@@ -1138,6 +1163,12 @@ MOS_STATUS MhwVdboxMfxInterfaceG12::AddMfxIndObjBaseAddrCmd(
             m_osInterface,
             cmdBuffer,
             &resourceParams));
+
+        if(HalOcaInterface::IsLargeResouceDumpSupported())
+        {
+            HalOcaInterface::OnIndirectState(*cmdBuffer, *pOsContext, resourceParams.presResource, 0, true, 0);
+        }
+
     }
     else if (CodecHalIsDecodeModeIT(params->Mode))
     {

@@ -38,6 +38,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "libdrm_macros.h"
+#include "igfxfmid.h"
 
 #define S_SUCCESS 0
 #define mos_safe_free(p)        \
@@ -74,6 +75,7 @@ enum mos_memory_zone {
 #define MEMZONE_PRIME_SIZE    (1ull << 40)
 #define MEMZONE_TOTAL         (1ull << 48)
 #define PAGE_SIZE_64K         (1ull << 16)
+#define PAGE_SIZE_1M          (1ull << 20)
 #define PAGE_SIZE_2M          (1ull << 21)
 #define PAGE_SIZE_4G          (1ull << 32)
 #define ARRAY_INIT_SIZE       5
@@ -228,7 +230,7 @@ struct mos_linux_bo *mos_bo_gem_create_from_name(struct mos_bufmgr *bufmgr,
                         unsigned int handle);
 void mos_bufmgr_gem_enable_reuse(struct mos_bufmgr *bufmgr);
 void mos_bufmgr_gem_enable_fenced_relocs(struct mos_bufmgr *bufmgr);
-void mos_bufmgr_gem_enable_softpin(struct mos_bufmgr *bufmgr);
+void mos_bufmgr_gem_enable_softpin(struct mos_bufmgr *bufmgr, bool va1m_align);
 void mos_bufmgr_gem_set_vma_cache_size(struct mos_bufmgr *bufmgr,
                          int limit);
 int mos_bufmgr_gem_get_memory_info(struct mos_bufmgr *bufmgr, char *info, uint32_t length);
@@ -386,6 +388,7 @@ int mos_get_slice_mask(int fd, unsigned int *slice_mask);
 uint8_t mos_switch_off_n_bits(uint8_t in_mask, int n);
 unsigned int mos_hweight8(uint8_t w);
 int mos_query_device_blob(int fd, MEDIA_SYSTEM_INFO* gfx_info);
+int mos_query_hw_ip_version(int fd, struct i915_engine_class_instance engine, void *ip_ver_info);
 
 #if defined(__cplusplus)
 extern "C" {

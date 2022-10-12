@@ -190,7 +190,9 @@ MOS_STATUS GraphicsResourceSpecific::Allocate(OsContext* osContextPtr, CreatePar
     {
         case MOS_TILE_Y:
             tileFormatLinux               = I915_TILING_Y;
-            if (params.m_isCompressible && MEDIA_IS_SKU(pOsContextSpecific->GetSkuTable(), FtrE2ECompression))
+            if (params.m_isCompressible                                            &&
+                MEDIA_IS_SKU(pOsContextSpecific->GetSkuTable(), FtrE2ECompression) &&
+                MEDIA_IS_SKU(pOsContextSpecific->GetSkuTable(), FtrCompressibleSurfaceDefault))
             {
                 gmmParams.Flags.Gpu.MMC = true;
                 gmmParams.Flags.Info.MediaCompressed = 1;
@@ -655,3 +657,15 @@ MOS_STATUS GraphicsResourceSpecific::Unlock(OsContext* osContextPtr)
     return MOS_STATUS_SUCCESS;
 }
 
+MOS_STATUS GraphicsResourceSpecific::SetTileModebyForce(GMM_RESCREATE_PARAMS &gmmParams, MOS_TILE_MODE_GMM tileMode)
+{
+    if (tileMode == MOS_TILE_64_GMM)
+    {
+        gmmParams.Flags.Info.Tile64 = true;
+    }
+    else if (tileMode == MOS_TILE_4_GMM)
+    {
+        gmmParams.Flags.Info.Tile4 = true;
+    }
+    return MOS_STATUS_SUCCESS;
+}

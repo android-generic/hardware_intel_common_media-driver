@@ -149,8 +149,10 @@
 #define CODECHAL_LPLA_NUM_OF_PASSES                     2
 
 // BRC
-#define CODECHAL_ENCODE_BRC_KBPS                        1000     // 1000bps for disk storage, aligned with industry usage
+#define CODECHAL_ENCODE_BRC_KBPS                        1000  // 1000bps for disk storage, aligned with industry usage
 #define CODECHAL_ENCODE_SCENE_CHANGE_DETECTED_MASK      0xffff
+#define CODECHAL_ENCODE_MIN_BITS_PER_PIXEL              12  // 8b 420
+#define CODECHAL_ENCODE_MAX_BITSTREAM_COMPRESSION       700
 
 typedef enum _CODECHAL_ENCODE_FUNCTION_ID
 {
@@ -858,6 +860,159 @@ struct CodechalTileInfo
 //!
 struct EncodeStatusReport
 {
+    enum BLOCK_SIZE
+    {
+        BLOCK_4X4   = 0,
+        BLOCK_16X16 = 1,
+    };
+
+    struct FRAME_STATS_INFO
+    {
+        float    PSNRLuma;
+        float    PSNRCb;
+        float    PSNRCr;
+        uint64_t SADLuma;
+        float    Qp;
+
+        union
+        {
+            uint32_t NumMB;
+            uint32_t NumCTU;
+        };
+
+        BLOCK_SIZE BlockSize;
+        uint32_t   NumIntraBlock;
+        uint32_t   NumInterBlock;
+        uint32_t   NumSkippedBlock;
+        uint32_t   reserved[8];
+    };
+
+    struct CTUHeader
+    {
+        union
+        {
+            struct
+            {
+                uint32_t CUcountminus1 : 6;
+                uint32_t MaxDepth : 2;
+                uint32_t reserved : 24;
+            };
+            uint32_t DW0;
+        };
+        uint16_t CurrXAddr;
+        uint16_t CurrYAddr;
+        uint32_t reserved1;
+    };
+
+    struct Int16Pair
+    {
+        int16_t x;
+        int16_t y;
+    };
+
+    struct CUInfo
+    {
+        union
+        {
+            struct
+            {
+                uint32_t CU_Size : 2;
+                uint32_t CU_pred_mode : 1;
+                uint32_t CU_part_mode : 3;
+                uint32_t InterPred_IDC_MV0 : 2;
+                uint32_t InterPred_IDC_MV1 : 2;
+                uint32_t LumaIntraMode : 6;
+                uint32_t ChromaIntraMode : 3;
+                uint32_t reserved : 13;
+            };
+            uint32_t DW0;
+        };
+
+        union
+        {
+            struct
+            {
+                uint32_t LumaIntraMode4x4_1 : 6;
+                uint32_t LumaIntraMode4x4_2 : 6;
+                uint32_t LumaIntraMode4x4_3 : 6;
+                uint32_t reserved1 : 14;
+            };
+            uint32_t DW1;
+        };
+
+        int8_t   QP;
+        uint8_t  reserved2[3];
+        uint32_t SAD;
+
+        Int16Pair MV[2][2];
+
+        union
+        {
+            struct
+            {
+                uint32_t L0_MV0_RefID : 4;
+                uint32_t L0_MV1_RefID : 4;
+                uint32_t L1_MV0_RefID : 4;
+                uint32_t L1_MV1_RefID : 4;
+                uint32_t reserved3 : 16;
+            };
+            uint32_t DW8;
+        };
+
+        uint32_t reserved4[10];
+    };
+
+    struct CTUInfo
+    {
+        CTUHeader CtuHeader;
+        CUInfo    CuInfo[64];
+        uint32_t  reserved;
+    };
+
+    struct MBInfo
+    {
+        union
+        {
+            struct
+            {
+                uint32_t MBType : 5;
+                uint32_t InterMBMode : 2;
+                uint32_t IntraMBMode : 2;
+                uint32_t IntraMBFlag : 1;
+                uint32_t SubMBShapes : 8;
+                uint32_t SubMBShapeMode : 8;
+                uint32_t ChromaIntraPredMode : 2;
+                uint32_t reserved : 4;
+            };
+            uint32_t DW0;
+        };
+
+        uint32_t SAD;
+        int8_t   Qp;
+        uint8_t  reserved1[3];
+
+        uint16_t LumaIntraMode[4];
+
+        uint32_t reserved2;
+    };
+
+    struct BLOCK_STATS_INFO
+    {
+        union
+        {
+            uint32_t NumMB;
+            uint32_t NumCTU;
+        };
+
+        union
+        {
+            CTUInfo *HEVCCTUArray;
+            MBInfo  *AVCMBArray;
+        };
+
+        uint32_t reserved[8];
+    };
+
     CODECHAL_STATUS                 CodecStatus;            //!< Status for the picture associated with this status report
     uint32_t                        StatusReportNumber;     //!< Status report number associated with the picture in this status report provided in CodechalEncoderState::Execute()
     CODEC_PICTURE                   CurrOriginalPic;        //!< Uncompressed frame information for the picture associated with this status report
@@ -930,6 +1085,9 @@ struct EncodeStatusReport
     uint32_t                        StreamId;
 
     LookaheadReport*                pLookaheadStatus;       //!< Pointer to the lookahead status buffer. Valid in lookahead pass only.
+
+    FRAME_STATS_INFO *pFrmStatsInfo;
+    BLOCK_STATS_INFO *pBlkStatsInfo;
 };
 
 //!
@@ -983,6 +1141,7 @@ struct EncodeStatus
     uint32_t                        dwSceneChangedFlag;     //!< The flag indicate if the scene is changed
     uint64_t                        sumSquareError[3];      //!< The list of sum square error
     EncodeStatusSliceReport         sliceReport;
+    uint32_t                        HuCStatus2Reg;          //!< Register value saving HuC Status2
 };
 
 //!
@@ -1015,6 +1174,7 @@ struct EncodeStatusBuffer
     uint32_t                                dwLookaheadStatusOffset;        //!> The offset of lookahead status
     uint32_t                                dwSize;                         //!> Size of status buffer
     uint32_t                                dwReportSize;                   //!> Size of report
+    uint32_t                                dwHuCStatus2RegOffset;          //!> The offset of HuC status2 register
 };
 
 //!
@@ -1133,7 +1293,8 @@ enum
     CODECHAL_ENCODE_PERFTAG_CALL_SCOREBOARD,
     CODECHAL_ENCODE_PERFTAG_CALL_SFD_KERNEL,
     CODECHAL_ENCODE_PERFTAG_CALL_PAK_ENGINE_SECOND_PASS,
-    CODECHAL_ENCODE_PERFTAG_CALL_BRC_UPDATE_SECOND_PASS
+    CODECHAL_ENCODE_PERFTAG_CALL_BRC_UPDATE_SECOND_PASS,
+    CODECHAL_ENCODE_PERFTAG_CALL_HEVC_LA_UPDATE
 };
 
 class CodechalEncodeWP;
@@ -1471,7 +1632,7 @@ public:
     bool                            m_statusQueryReportingEnabled = false;                            //!< Flag to indicate if we support eStatus query reporting on current Platform
     EncodeStatusBuffer              m_encodeStatusBuf = {};                         //!< Stores all the status_query related data for PAK engine
     EncodeStatusBuffer              m_encodeStatusBufRcs = {};                      //!< Stores all the status_query related data for render ring (RCS)
-    MHW_VDBOX_IMAGE_STATUS_CONTROL  m_imgStatusControlBuffer;                       //!< Stores image eStatus control data
+    MHW_VDBOX_IMAGE_STATUS_CONTROL  m_imgStatusControlBuffer = {};                  //!< Stores image eStatus control data
     uint32_t                        m_statusReportFeedbackNumber = 0;               //!< Status report feed back number
     bool                            m_frameTrackingEnabled = false;                 //!< Flag to indicate if we enable KMD frame tracking
     uint32_t                        m_numberTilesInFrame = 0;                       //!< Track number of tiles per frame
@@ -2461,6 +2622,12 @@ public:
         PMOS_RESOURCE pHwLayoutMetaData,
         PMOS_RESOURCE pResolvedLayoutMetadata) override;
 
+    MOS_STATUS ReportErrorFlag(
+        PMOS_RESOURCE pMetadataBuffer,
+        uint32_t      size,
+        uint32_t      offset,
+        uint32_t      flag) override;
+
     virtual MOS_STATUS PrepareHWMetaData(
         PMOS_RESOURCE           presMetadataBuffer,
         PMOS_RESOURCE           presLcuBaseAddressBuffer,
@@ -2468,6 +2635,17 @@ public:
     {
         return MOS_STATUS_SUCCESS;
     }
+
+    //!
+    //! \brief    Add store HUC_STATUS2 register
+    //!
+    //! \param    [in] cmdBuffer
+    //!           Pointer to the command buffer 
+    //!
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    MOS_STATUS StoreHuCStatus2Report(PMOS_COMMAND_BUFFER cmdBuffer);
 
 #if USE_CODECHAL_DEBUG_TOOL
     virtual MOS_STATUS DumpMbEncPakOutput(PCODEC_REF_LIST currRefList, CodechalDebugInterface* debugInterface);

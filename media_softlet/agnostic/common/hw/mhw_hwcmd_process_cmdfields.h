@@ -30,7 +30,7 @@
         DO_FIELDS();
     #undef DO_FIELD
     #if MHW_HWCMDPARSER_ENABLED
-        if (m_parseFieldsLayout)
+        if (m_hwcmdParser->ParseFieldsLayoutEn())
         {
     #define DO_FIELD(dw, field, value) MHW_HWCMDPARSER_PARSEFIELDLAYOUT(dw, field)
             DO_FIELDS();
@@ -39,4 +39,6 @@
     #endif  // MHW_HWCMDPARSER_ENABLED
     #undef DO_FIELDS
 #endif  // DO_FIELDS
+#ifndef NO_RETURN
         return MOS_STATUS_SUCCESS;
+#endif  // NO_RETURN

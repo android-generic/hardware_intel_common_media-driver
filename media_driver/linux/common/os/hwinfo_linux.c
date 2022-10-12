@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2019, Intel Corporation
+* Copyright (c) 2017-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -59,6 +59,53 @@ static bool MediaGetParam(int fd, int32_t param, uint32_t *retValue)
     return drmIoctl(fd, DRM_IOCTL_I915_GETPARAM, &gp) == 0;
 }
 
+#ifdef _MEDIA_RESERVED
+/*****************************************************************************\
+Description:
+    Get IpGmdID for separate IP products according to input engine_class
+
+Input:
+    fd              - file descriptor to the /dev/dri/cardX
+    engine_class    - engine class
+Output:
+    ipVerInfo       - GmdID info describing current IP version info
+\*****************************************************************************/
+static MOS_STATUS MediaGetIpGmdID(int32_t       fd,
+                          MOS_BUFMGR            *pDrmBufMgr,
+                          uint16_t              engineClass,
+                          unsigned int          maxNengine,
+                          GFX_GMD_ID            *ipVerInfo)
+{
+    unsigned int nengine = maxNengine;
+    struct i915_engine_class_instance *uengines = nullptr;
+
+    if ((fd < 0) || (pDrmBufMgr == nullptr) || (maxNengine == 0) || (ipVerInfo == nullptr))
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid parameter \n");
+        return MOS_STATUS_INVALID_PARAMETER;
+    }
+
+    uengines = (struct i915_engine_class_instance *)MOS_AllocAndZeroMemory(nengine * sizeof(struct i915_engine_class_instance));
+    MOS_OS_CHK_NULL_RETURN(uengines);
+    if (mos_query_engines(pDrmBufMgr, engineClass, 0, &nengine, uengines) || (nengine == 0))
+    {
+        MOS_OS_ASSERTMESSAGE("Failed to query engine\n");
+        MOS_SafeFreeMemory(uengines);
+        return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
+    }
+
+    if (mos_query_hw_ip_version(fd, uengines[0], (void *)ipVerInfo))
+    {
+        MOS_OS_ASSERTMESSAGE("Failed to query hw_ip_version\n");
+        MOS_SafeFreeMemory(uengines);
+        return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
+    }
+
+    MOS_SafeFreeMemory(uengines);
+
+    return MOS_STATUS_SUCCESS;
+}
+#endif
 /*****************************************************************************\
 Description:
     Get ProductFamily according to input device FD
@@ -180,11 +227,11 @@ MOS_STATUS HWInfo_GetGfxInfo(int32_t           fd,
     if((gtSystemInfo->VDBoxInfo.NumberOfVDBoxEnabled == 0)
         || (gtSystemInfo->VEBoxInfo.NumberOfVEBoxEnabled == 0))
     {
-        if (mos_query_engines_count(pDrmBufMgr, &maxNengine))
-            {
-                MOS_OS_ASSERTMESSAGE("Failed to query engines count.\n");
-                return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
-            }
+        if (mos_query_engines_count(pDrmBufMgr, &maxNengine) || (maxNengine == 0))
+        {
+            MOS_OS_ASSERTMESSAGE("Failed to query engines count.\n");
+            return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
+        }
     }
 
     if (gtSystemInfo->VDBoxInfo.NumberOfVDBoxEnabled == 0)
@@ -238,7 +285,42 @@ MOS_STATUS HWInfo_GetGfxInfo(int32_t           fd,
         devInit->InitMediaFeature(devInfo, skuTable, &drvInfo) &&
         devInit->InitMediaWa(devInfo, waTable, &drvInfo))
     {
+#ifdef _MEDIA_RESERVED
         MOS_OS_NORMALMESSAGE("Init Media SKU/WA info successfully\n");
+        if (MEDIA_IS_SKU(skuTable, FtrMediaIPSeparation))
+        {
+            gfxPlatform->eMediaCoreFamily = (GFXCORE_FAMILY)devInfo->mediaFamily;
+
+            if (0 == gfxPlatform->sMediaBlockID.Value)
+            {
+                if (MediaGetIpGmdID(fd, pDrmBufMgr, I915_ENGINE_CLASS_VIDEO, maxNengine, &(gfxPlatform->sMediaBlockID)))
+                {
+                    MOS_OS_ASSERTMESSAGE("Failed to query vdbox engine GmdID\n");
+                    return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
+                }
+                else
+                {
+                    MOS_OS_NORMALMESSAGE("Media mediaRevID arch:%d, release:%d, RevisionID:%d\n", gfxPlatform->sMediaBlockID.GmdID.GMDArch,
+                                        gfxPlatform->sMediaBlockID.GmdID.GMDRelease, gfxPlatform->sMediaBlockID.GmdID.RevisionID);
+                }
+            }
+
+            if (0 == gfxPlatform->sRenderBlockID.Value)
+            {
+                if (MediaGetIpGmdID(fd, pDrmBufMgr, I915_ENGINE_CLASS_RENDER, maxNengine, &(gfxPlatform->sRenderBlockID)))
+                {
+                    MOS_OS_ASSERTMESSAGE("Failed to query render GmdID\n");
+                    return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
+                }
+
+                else
+                {
+                    MOS_OS_NORMALMESSAGE("Media sRenderBlockID arch:%d, release:%d, RevisionID:%d\n", gfxPlatform->sRenderBlockID.GmdID.GMDArch,
+                                        gfxPlatform->sRenderBlockID.GmdID.GMDRelease, gfxPlatform->sRenderBlockID.GmdID.RevisionID);
+                }
+            }
+        }
+#endif
     }
     else
     {
@@ -274,7 +356,7 @@ MOS_STATUS HWInfo_GetGfxInfo(int32_t           fd,
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_MEDIASOLO_ENABLE_ID,
         &UserFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)nullptr);
     //Disable plarform checks to support pre-si features (e.g., MMCD) on MediaSolo
     MEDIA_WR_WA(waTable, WaDisregardPlatformChecks, (UserFeatureData.i32Data) ? true : false);
 #endif

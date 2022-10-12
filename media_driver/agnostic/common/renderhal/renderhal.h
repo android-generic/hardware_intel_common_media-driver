@@ -69,6 +69,9 @@ class XRenderHal_Platform_Interface;
 #define MHW_RENDERHAL_CHK_STATUS(_stmt)                                                   \
     MOS_CHK_STATUS(MOS_COMPONENT_CM, MOS_CM_SUBCOMP_RENDERHAL, _stmt)
 
+#define MHW_RENDERHAL_CHK_STATUS_RETURN(_stmt)                                        \
+    MOS_CHK_STATUS_RETURN(MOS_COMPONENT_VP, MOS_VP_SUBCOMP_PUBLIC, _stmt)
+
 #define MHW_RENDERHAL_CHK_STATUS_MESSAGE(_stmt, _message, ...)                        \
     MOS_CHK_STATUS_MESSAGE(MOS_COMPONENT_CM, MOS_CM_SUBCOMP_RENDERHAL, _stmt, _message, ##__VA_ARGS__)
 
@@ -1129,6 +1132,7 @@ typedef struct _RENDERHAL_SETMARKER_SETTINGS
 } RENDERHAL_SETMARKER_SETTINGS;
 
 typedef MhwMiInterface *PMHW_MI_INTERFACE;
+
 //!
 // \brief   Hardware dependent render engine interface
 //!
@@ -1264,7 +1268,8 @@ typedef struct _RENDERHAL_INTERFACE
     bool                        isMMCEnabled;
 
     MediaPerfProfiler               *pPerfProfiler = nullptr;  //!< Performance data profiler
-    int32_t                          iSourceCount  = 0;
+    bool                            eufusionBypass = false;
+
     //---------------------------
     // HW interface functions
     //---------------------------
@@ -1734,7 +1739,6 @@ typedef struct _RENDERHAL_INTERFACE
     //-----------------------------
     //Platform related interface
     XRenderHal_Platform_Interface           *pRenderHalPltInterface;
-
 } RENDERHAL_INTERFACE;
 
 //!

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2020, Intel Corporation
+* Copyright (c) 2009-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -1771,7 +1771,7 @@ DdiVp_InitVpHal(
 {
     PERF_UTILITY_AUTO(__FUNCTION__, PERF_VP, PERF_LEVEL_DDI);
 
-    VphalState                *pVpHal;
+    VpBase                    *pVpHal;
     VphalSettings             VpHalSettings;
 
     VAStatus                  vaStatus;
@@ -1785,7 +1785,7 @@ DdiVp_InitVpHal(
 
     // Create VpHal state
     MOS_STATUS eStatus = MOS_STATUS_UNKNOWN;
-    pVpHal = VphalState::VphalStateFactory( nullptr, &(pVpCtx->MosDrvCtx), &eStatus);
+    pVpHal = VpBase::VphalStateFactory( nullptr, &(pVpCtx->MosDrvCtx), &eStatus);
 
     if (pVpHal && MOS_FAILED(eStatus))
     {
@@ -2527,13 +2527,24 @@ DdiVp_SetProcFilterHVSDenoiseParams(
 
     if (pSrc->pDenoiseParams->HVSDenoise.Mode == HVSDENOISE_AUTO_BDRATE)
     {
-        pSrc->pDenoiseParams->HVSDenoise.QP       = 32;       // HVS Auto Bdrate Mode default qp 32
+        pSrc->pDenoiseParams->HVSDenoise.QP       = pHVSDnParamBuff->qp;
+        if (pSrc->pDenoiseParams->HVSDenoise.QP == 0)
+        {
+            //If didn't set value, HVS Auto Bdrate Mode default qp 27
+            pSrc->pDenoiseParams->HVSDenoise.QP   = 27;
+        }
+    }
+    else if (pSrc->pDenoiseParams->HVSDenoise.Mode == HVSDENOISE_AUTO_SUBJECTIVE)
+    {
+        //HVS Subjective Mode default qp 32
+        pSrc->pDenoiseParams->HVSDenoise.QP       = 32;
     }
     else
     {
-        pSrc->pDenoiseParams->HVSDenoise.QP       = pHVSDnParamBuff->qp;
+        pSrc->pDenoiseParams->HVSDenoise.QP       = 32;
         pSrc->pDenoiseParams->HVSDenoise.Strength = pHVSDnParamBuff->strength;
     }
+
     VP_DDI_NORMALMESSAGE("HVS Denoise is enabled with qp %d, strength %d, mode %d!", pSrc->pDenoiseParams->HVSDenoise.QP, pSrc->pDenoiseParams->HVSDenoise.Strength, pSrc->pDenoiseParams->HVSDenoise.Mode);
 
     return VA_STATUS_SUCCESS;
@@ -3725,7 +3736,7 @@ VAStatus DdiVp_EndPicture (
 
     PDDI_VP_CONTEXT         pVpCtx;
     uint32_t                uiCtxType;
-    VphalState              *pVpHal;
+    VpBase                  *pVpHal;
     MOS_STATUS              eStatus;
 
     VP_DDI_FUNCTION_ENTER;
@@ -4347,7 +4358,24 @@ DdiVp_QueryVideoProcFilterCaps (
         
         /* HVS Noise reduction filter */
         case VAProcFilterHVSNoiseReduction:
-            /* Add it later */
+            if (mediaDrvCtx)
+            {
+                if (MEDIA_IS_SKU(&mediaDrvCtx->SkuTable, FtrHVSDenoise))
+                {
+                    uExistCapsNum = 4;
+                    *num_filter_caps = uExistCapsNum;
+                }
+                else
+                {
+                    uExistCapsNum = 0;
+                    *num_filter_caps = uExistCapsNum;
+                }
+            }
+            else
+            {
+                VP_DDI_ASSERTMESSAGE("mediaDrvCtx is null pointer.\n");
+                return VA_STATUS_ERROR_INVALID_CONTEXT;
+            }
             break;
 
         /* Deinterlacing filter */
@@ -4475,33 +4503,36 @@ DdiVp_QueryVideoProcFilterCaps (
         {
             if (mediaDrvCtx)
             {
-                uExistCapsNum = 1;
-                *num_filter_caps = uExistCapsNum;
-                if (uQueryFlag == QUERY_CAPS_ATTRIBUTE)
+                if (MEDIA_IS_SKU(&mediaDrvCtx->SkuTable, FtrHDR))
                 {
-                    VAProcFilterCapHighDynamicRange *HdrTmCap = (VAProcFilterCapHighDynamicRange *)filter_caps;
-
-                    if (uQueryCapsNum < uExistCapsNum)
+                    uExistCapsNum = 1;
+                    *num_filter_caps = uExistCapsNum;
+                    if (uQueryFlag == QUERY_CAPS_ATTRIBUTE)
                     {
-                        return VA_STATUS_ERROR_MAX_NUM_EXCEEDED;
-                    }
+                        VAProcFilterCapHighDynamicRange *HdrTmCap = (VAProcFilterCapHighDynamicRange *)filter_caps;
 
-                    if (HdrTmCap)
-                    {
-                        HdrTmCap->metadata_type = VAProcHighDynamicRangeMetadataHDR10;
-                        HdrTmCap->caps_flag = VA_TONE_MAPPING_HDR_TO_HDR | VA_TONE_MAPPING_HDR_TO_SDR | VA_TONE_MAPPING_HDR_TO_EDR;
+                        if (uQueryCapsNum < uExistCapsNum)
+                        {
+                            return VA_STATUS_ERROR_MAX_NUM_EXCEEDED;
+                        }
+
+                        if (HdrTmCap)
+                        {
+                            HdrTmCap->metadata_type = VAProcHighDynamicRangeMetadataHDR10;
+                            HdrTmCap->caps_flag = VA_TONE_MAPPING_HDR_TO_HDR | VA_TONE_MAPPING_HDR_TO_SDR | VA_TONE_MAPPING_HDR_TO_EDR;
+                        }
                     }
                 }
                 else
                 {
-                    VP_DDI_NORMALMESSAGE("VAProcFilterHighDynamicRangeToneMapping uQueryFlag != QUERY_CAPS_ATTRIBUTE.\n");
-                    return VA_STATUS_ERROR_INVALID_VALUE;
+                    uExistCapsNum = 0;
+                    *num_filter_caps = uExistCapsNum;
                 }
             }
             else
             {
-                VP_DDI_NORMALMESSAGE("Other platforms except ICL can not support VAProcFilterHighDynamicRangeToneMapping.\n");
-                return VA_STATUS_ERROR_INVALID_VALUE;
+                VP_DDI_ASSERTMESSAGE("mediaDrvCtx is null pointer.\n");
+                return VA_STATUS_ERROR_INVALID_CONTEXT;
             }
             break;
         }

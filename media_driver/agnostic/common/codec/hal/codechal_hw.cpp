@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2020, Intel Corporation
+* Copyright (c) 2011-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -83,6 +83,51 @@ CodechalHwInterface::CodechalHwInterface(
     MOS_ZeroMemory(&m_dummyStreamOut, sizeof(m_dummyStreamOut));
     MOS_ZeroMemory(&m_conditionalBbEndDummy, sizeof(m_conditionalBbEndDummy));
 }
+
+#ifdef IGFX_MHW_INTERFACES_NEXT_SUPPORT
+CodechalHwInterface::CodechalHwInterface(
+    PMOS_INTERFACE    osInterface,
+    CODECHAL_FUNCTION codecFunction,
+    MhwInterfacesNext *mhwInterfacesNext,
+    bool              disableScalability)
+{
+    CODECHAL_HW_FUNCTION_ENTER;
+
+#if MHW_HWCMDPARSER_ENABLED
+    mhw::HwcmdParser::InitInstance(osInterface);
+#endif
+
+    // Basic intialization
+    m_osInterface = osInterface;
+
+    m_osInterface->pfnGetPlatform(m_osInterface, &m_platform);
+
+    m_skuTable = m_osInterface->pfnGetSkuTable(m_osInterface);
+    m_waTable = m_osInterface->pfnGetWaTable(m_osInterface);
+
+    CODECHAL_HW_ASSERT(m_skuTable);
+    CODECHAL_HW_ASSERT(m_waTable);
+
+    // Init sub-interfaces
+    m_cpInterface = mhwInterfacesNext->m_cpInterface;
+    m_mfxInterface = mhwInterfacesNext->m_mfxInterface;
+    m_hcpInterface = mhwInterfacesNext->m_hcpInterface;
+    m_hucInterface = mhwInterfacesNext->m_hucInterface;
+    m_vdencInterface = mhwInterfacesNext->m_vdencInterface;
+    m_veboxInterface = mhwInterfacesNext->m_veboxInterface;
+    m_sfcInterface = mhwInterfacesNext->m_sfcInterface;
+    m_miInterface = mhwInterfacesNext->m_miInterface;
+    m_renderInterface = mhwInterfacesNext->m_renderInterface;
+
+    m_stateHeapSettings = MHW_STATE_HEAP_SETTINGS();
+    m_disableScalability = disableScalability;
+
+    MOS_ZeroMemory(&m_hucDmemDummy, sizeof(m_hucDmemDummy));
+    MOS_ZeroMemory(&m_dummyStreamIn, sizeof(m_dummyStreamIn));
+    MOS_ZeroMemory(&m_dummyStreamOut, sizeof(m_dummyStreamOut));
+    MOS_ZeroMemory(&m_conditionalBbEndDummy, sizeof(m_conditionalBbEndDummy));
+}
+#endif
 
 MOS_STATUS CodechalHwInterface::SetCacheabilitySettings(
     MHW_MEMORY_OBJECT_CONTROL_PARAMS cacheabilitySettings[MOS_CODEC_RESOURCE_USAGE_END_CODEC])
@@ -514,7 +559,7 @@ MOS_STATUS CodechalHwInterface::GetVdencStateCommandsDataSize(
         commands += m_miInterface->GetMiFlushDwCmdSize();
         commands += m_miInterface->GetMiBatchBufferStartCmdSize();
     }
-    else if (standard == CODECHAL_RESERVED0)
+    else if (standard == CODECHAL_AV1)
     {
         commands += m_miInterface->GetMiFlushDwCmdSize();
         commands += m_miInterface->GetMiBatchBufferStartCmdSize();
@@ -690,6 +735,7 @@ MOS_STATUS CodechalHwInterface::AddVdencBrcImgBuffer(
 
     uint32_t mfxAvcImgStateSize = m_mfxInterface->GetAvcImgStateSize();
     uint32_t vdencAvcCostStateSize = m_vdencInterface->GetVdencAvcCostStateSize();
+    uint32_t vdencCmd3Size = m_vdencInterface->GetVdencCmd3Size();
     uint32_t vdencAvcImgStateSize = m_vdencInterface->GetVdencAvcImgStateSize();
 
     MOS_ZeroMemory(&lockFlags, sizeof(MOS_LOCK_PARAMS));
@@ -702,7 +748,7 @@ MOS_STATUS CodechalHwInterface::AddVdencBrcImgBuffer(
 
     MOS_ZeroMemory(&constructedCmdBuf, sizeof(MOS_COMMAND_BUFFER));
     constructedCmdBuf.pCmdBase = (uint32_t *)data;
-    constructedCmdBuf.iRemaining = mfxAvcImgStateSize + vdencAvcCostStateSize + vdencAvcImgStateSize;
+    constructedCmdBuf.iRemaining = mfxAvcImgStateSize + vdencAvcCostStateSize + vdencCmd3Size + vdencAvcImgStateSize;
 
     // Set MFX_IMAGE_STATE command
     constructedCmdBuf.pCmdPtr = (uint32_t *)data;
@@ -712,12 +758,16 @@ MOS_STATUS CodechalHwInterface::AddVdencBrcImgBuffer(
     // Set VDENC_COST_STATE command
     constructedCmdBuf.pCmdPtr = (uint32_t *)(data + mfxAvcImgStateSize);
     constructedCmdBuf.iOffset = mfxAvcImgStateSize;
-    m_vdencInterface->AddVdencAvcCostStateCmd(&constructedCmdBuf, nullptr, params);
+    MHW_MI_CHK_STATUS(m_vdencInterface->AddVdencAvcCostStateCmd(&constructedCmdBuf, nullptr, params));
 
-    // Set VDENC_IMAGE_STATE command
+    // Set VDENC_CMD3 command
     constructedCmdBuf.pCmdPtr = (uint32_t *)(data + mfxAvcImgStateSize + vdencAvcCostStateSize);
     constructedCmdBuf.iOffset = mfxAvcImgStateSize + vdencAvcCostStateSize;
+    MHW_MI_CHK_STATUS(m_vdencInterface->AddVdencCmd3Cmd(&constructedCmdBuf, nullptr, params));
 
+    // Set VDENC_IMAGE_STATE command
+    constructedCmdBuf.pCmdPtr = (uint32_t *)(data + mfxAvcImgStateSize + vdencAvcCostStateSize + vdencCmd3Size);
+    constructedCmdBuf.iOffset = mfxAvcImgStateSize + vdencAvcCostStateSize + vdencCmd3Size;
     MHW_MI_CHK_STATUS(m_vdencInterface->AddVdencImgStateCmd(&constructedCmdBuf, nullptr, params));
 
     // Add batch buffer end insertion flag

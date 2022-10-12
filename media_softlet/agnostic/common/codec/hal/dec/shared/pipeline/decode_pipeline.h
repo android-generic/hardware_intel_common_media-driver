@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2020, Intel Corporation
+* Copyright (c) 2018-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -43,6 +43,24 @@
 #include "decode_downsampling_feature.h"
 
 namespace decode {
+
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    typedef struct _DECODE_EVENTDATA_YUV_SURFACE_INFO
+    {
+        uint32_t PicFlags;
+        uint32_t FrameType;
+        uint32_t dwOffset;
+        int32_t  YPlaneOffset_iYOffset;
+        uint32_t dwPitch;
+        uint32_t dwWidth;
+        uint32_t dwHeight;
+        uint32_t Format;
+        int32_t  UPlaneOffset_iLockSurfaceOffset;
+        int32_t  VPlaneOffset_iLockSurfaceOffset;
+        int32_t  UPlaneOffset_iSurfaceOffset;
+        int32_t  VPlaneOffset_iSurfaceOffset;
+    } DECODE_EVENTDATA_YUV_SURFACE_INFO;
+#endif
 
 enum DecodePipeMode
 {
@@ -368,7 +386,11 @@ protected:
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
     virtual MOS_STATUS CreateSubPackets(DecodeSubPacketManager& subPacketManager, CodechalSetting &codecSettings);
-
+    //!
+    //! \brief  Declare Regkeys in the scope of decode
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    virtual MOS_STATUS InitUserSetting(MediaUserSettingSharedPtr userSettingPtr) override;
 
 #if USE_CODECHAL_DEBUG_TOOL
 #ifdef _DECODE_PROCESSING_SUPPORTED
@@ -385,6 +407,11 @@ protected:
     virtual MOS_STATUS DumpOutput(const DecodeStatusReportData& reportData);
 #endif
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    MOS_STATUS TraceDataDumpOutput(const DecodeStatusReportData &reportData);
+    MOS_STATUS TraceDataDump2ndLevelBB(PMHW_BATCH_BUFFER batchBuffer);
+#endif
+
 #if (_DEBUG || _RELEASE_INTERNAL)
     //!
     //! \brief  User feature key report for Vdbox IDs
@@ -394,6 +421,19 @@ protected:
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
     MOS_STATUS ReportVdboxIds(const DecodeStatusMfx& status);
+
+    //!
+    //! \brief  Earlier stop for hw error status
+    //! \param  [in] status
+    //!         Status report from HW
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS HwStatusCheck(const DecodeStatusMfx &status)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
 #ifdef _DECODE_PROCESSING_SUPPORTED
     //!
     //! \brief  User feature key report for Sfc Linear Usage Status
@@ -460,6 +500,10 @@ protected:
 #if (_DEBUG || _RELEASE_INTERNAL)
     uint32_t                m_statusCheckCount = 0;     //!< count for status check
 #endif
+
+    PMOS_SURFACE            m_tempOutputSurf = nullptr;
+
+MEDIA_CLASS_DEFINE_END(decode__DecodePipeline)
 };
 
 }//decode

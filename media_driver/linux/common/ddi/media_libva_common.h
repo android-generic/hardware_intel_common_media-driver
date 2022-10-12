@@ -44,8 +44,11 @@
 
 #include "mos_os.h"
 #include "mos_auxtable_mgr.h"
+
+#ifdef _MANUAL_SOFTLET_
 #include "ddi_media_functions.h"
 #include "media_interfaces_hwinfo.h"
+#endif
 
 #include <va/va.h>
 #include <va/va_backend.h>
@@ -142,6 +145,7 @@ typedef sem_t MEDIA_SEM_T, *PMEDIA_SEM_T;
 #define MEDIAAPI_EXPORT __attribute__((visibility("default")))
 
 class MediaLibvaCaps;
+class MediaLibvaCapsNext;
 
 typedef enum _DDI_MEDIA_FORMAT
 {
@@ -481,6 +485,9 @@ struct DDI_MEDIA_CONTEXT
     // Media copy data structure
     void               *pMediaCopyState;
 
+    // Perf tag
+    PERF_DATA          *perfData;
+
     // Media reset enable flag
     bool                bMediaResetEnable;
 
@@ -532,8 +539,6 @@ struct DDI_MEDIA_CONTEXT
 
     GMM_CLIENT_CONTEXT  *pGmmClientContext;
 
-    GmmExportEntries   GmmFuncs;
-
     // Aux Table Manager
     AuxTableMgr         *m_auxTableMgr;
 
@@ -550,9 +555,13 @@ struct DDI_MEDIA_CONTEXT
     MEDIA_MUTEX_T    PutSurfaceRenderMutex;
     MEDIA_MUTEX_T    PutSurfaceSwapBufferMutex;
 #endif
-    bool                   m_apoMosEnabled;
-    DdiMediaFunctions     *m_compList[CompCount];
-    MediaInterfacesHwInfo *m_hwInfo;
+    bool                  m_apoMosEnabled;
+#ifdef _MANUAL_SOFTLET_
+    DdiMediaFunctions     *m_compList[CompCount] = {nullptr};
+    MediaInterfacesHwInfo *m_hwInfo = nullptr;
+    MediaLibvaCapsNext    *m_capsNext = nullptr;
+    bool                  m_apoDdiEnabled = false;
+#endif
 };
 
 static __inline PDDI_MEDIA_CONTEXT DdiMedia_GetMediaContext (VADriverContextP ctx)

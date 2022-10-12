@@ -69,6 +69,7 @@ bs_set_if_undefined(Media_Scalability_Supported "yes")
 bs_set_if_undefined(AVC_Encode_VDEnc_Supported "${Encode_VDEnc_Supported}")
 bs_set_if_undefined(HEVC_Encode_VDEnc_Supported "${Encode_VDEnc_Supported}")
 bs_set_if_undefined(VP9_Encode_VDEnc_Supported "${Encode_VDEnc_Supported}")
+bs_set_if_undefined(AV1_Encode_VDEnc_Supported "${Encode_VDEnc_Supported}")
 bs_set_if_undefined(JPEG_Encode_Supported "${Encode_VDEnc_Supported}")
 
 if(${Common_Encode_Supported} STREQUAL "yes")
@@ -131,6 +132,10 @@ if(${VP9_Encode_VDEnc_Supported} STREQUAL "yes")
     add_definitions(-D_VP9_ENCODE_VDENC_SUPPORTED)
 endif()
 
+if(${AV1_Encode_VDEnc_Supported} STREQUAL "yes")
+    add_definitions(-D_AV1_ENCODE_VDENC_SUPPORTED)
+endif()
+
 if(${VP9_Decode_Supported} STREQUAL "yes")
     add_definitions(-D_VP9_DECODE_SUPPORTED)
 endif()
@@ -163,8 +168,15 @@ else()
     add_definitions(-D__VPHAL_SFC_SUPPORTED=0)
 endif()
 
+bs_set_if_undefined(CLASS_TRACE 0)
+add_definitions(-DCLASS_TRACE=${CLASS_TRACE})
+
 if(ENABLE_KERNELS)
     add_definitions(-DENABLE_KERNELS)
+endif()
+
+if(BUILD_KERNELS)
+    add_definitions(-DBUILD_KERNELS)
 endif()
 
 if(NOT ENABLE_NONFREE_KERNELS)
@@ -172,3 +184,9 @@ if(NOT ENABLE_NONFREE_KERNELS)
 endif()
 
 include(${MEDIA_EXT_CMAKE}/ext/linux/media_feature_flags_linux_ext.cmake OPTIONAL)
+
+option(MHW_INTERFACES_NEXT_SUPPORT "Enable MHW Interfaces NEXT Support" ON)
+
+if(MHW_INTERFACES_NEXT_SUPPORT)
+    add_definitions(-DIGFX_MHW_INTERFACES_NEXT_SUPPORT)
+endif()

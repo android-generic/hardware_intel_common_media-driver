@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2021, Intel Corporation
+* Copyright (c) 2018-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -38,6 +38,7 @@
 #include "mos_solo_generic.h"
 #include "decode_sfc_histogram_postsubpipeline.h"
 #include "decode_common_feature_defs.h"
+#include "decode_resource_auto_lock.h"
 
 namespace decode {
 
@@ -50,10 +51,10 @@ DecodePipeline::DecodePipeline(
 
     DECODE_ASSERT(hwInterface != nullptr);
     m_hwInterface = hwInterface;
+    MOS_STATUS m_status = (InitUserSetting(m_userSettingPtr));
 
     m_singleTaskPhaseSupported =
-        ReadUserFeature(__MEDIA_USER_FEATURE_VALUE_SINGLE_TASK_PHASE_ENABLE_ID, m_osInterface ? m_osInterface->pOsContext : nullptr).i32Data ? true : false;
-
+        ReadUserFeature(m_userSettingPtr, "Decode Single Task Phase Enable", MediaUserSetting::Group::Sequence).Get<bool>();
     CODECHAL_DEBUG_TOOL(
         DECODE_ASSERT(debugInterface != nullptr);
         m_debugInterface = debugInterface;
@@ -184,6 +185,9 @@ MOS_STATUS DecodePipeline::Initialize(void *settings)
 MOS_STATUS DecodePipeline::Uninitialize()
 {
     DECODE_FUNC_CALL();
+
+    // Wait all cmd completion before delete resource.
+    m_osInterface->pfnWaitAllCmdCompletion(m_osInterface);
 
     Delete_DecodeCpInterface(m_decodecp);
     m_decodecp = nullptr;
@@ -418,6 +422,17 @@ MOS_STATUS DecodePipeline::DumpOutput(const DecodeStatusReportData& reportData)
                 DECODE_CHK_STATUS(m_allocator->GetSurfaceInfo(&sfcDstSurface));
                 DECODE_CHK_STATUS(m_debugInterface->DumpYUVSurface(
                     &sfcDstSurface, CodechalDbgAttr::attrSfcOutputSurface, "SfcDstSurf"));
+
+#if (_DEBUG || _RELEASE_INTERNAL)
+                //rgb format read from reg key
+                uint32_t sfcOutputRgbFormatFlag =
+                    ReadUserFeature(m_userSettingPtr, "Decode SFC RGB Format Output", MediaUserSetting::Group::Sequence).Get<uint32_t>();
+                if (sfcOutputRgbFormatFlag)
+                {
+                    DECODE_CHK_STATUS(m_debugInterface->DumpRgbDataOnYUVSurface(
+                        &sfcDstSurface, CodechalDbgAttr::attrSfcOutputSurface, "SfcDstRgbSurf"));
+                }
+#endif
             }
         }
 
@@ -437,14 +452,119 @@ MOS_STATUS DecodePipeline::DumpOutput(const DecodeStatusReportData& reportData)
 }
 #endif
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+MOS_STATUS DecodePipeline::TraceDataDumpOutput(const DecodeStatusReportData &reportData)
+{
+    bool bAllocate = false;
+    MOS_SURFACE dstSurface;
+    MOS_ZeroMemory(&dstSurface, sizeof(dstSurface));
+    dstSurface.OsResource = reportData.currDecodedPicRes;
+    DECODE_CHK_STATUS(m_allocator->GetSurfaceInfo(&dstSurface));
+
+    if (!m_allocator->ResourceIsNull(&dstSurface.OsResource))
+    {
+        if (m_tempOutputSurf == nullptr || m_allocator->ResourceIsNull(&m_tempOutputSurf->OsResource))
+        {
+            bAllocate = true;
+        }
+        else if (m_tempOutputSurf->dwWidth  < dstSurface.dwWidth ||
+                 m_tempOutputSurf->dwHeight < dstSurface.dwHeight)
+        {
+            bAllocate = true;
+        }
+        else
+        {
+            bAllocate = false;
+        }
+
+        if (bAllocate)
+        {
+            if (!m_allocator->ResourceIsNull(&m_tempOutputSurf->OsResource))
+            {
+                m_allocator->Destroy(m_tempOutputSurf);
+            }
+
+            m_tempOutputSurf = m_allocator->AllocateLinearSurface(
+                dstSurface.dwWidth,
+                dstSurface.dwHeight,
+                "Decode Output Surf",
+                dstSurface.Format,
+                dstSurface.bIsCompressed,
+                resourceOutputPicture,
+                lockableSystemMem,
+                MOS_TILE_LINEAR_GMM);
+        }
+
+        DECODE_CHK_STATUS(m_osInterface->pfnDoubleBufferCopyResource(
+            m_osInterface,
+            &dstSurface.OsResource,
+            &m_tempOutputSurf->OsResource,
+            false));
+
+        DECODE_EVENTDATA_YUV_SURFACE_INFO eventData =
+        {
+            (uint32_t)reportData.currDecodedPic.PicFlags,
+            reportData.frameType,
+            m_tempOutputSurf->dwOffset,
+            m_tempOutputSurf->YPlaneOffset.iYOffset,
+            m_tempOutputSurf->dwPitch,
+            m_tempOutputSurf->dwWidth,
+            m_tempOutputSurf->dwHeight,
+            (uint32_t)m_tempOutputSurf->Format,
+            m_tempOutputSurf->UPlaneOffset.iLockSurfaceOffset,
+            m_tempOutputSurf->VPlaneOffset.iLockSurfaceOffset,
+            m_tempOutputSurf->UPlaneOffset.iSurfaceOffset,
+            m_tempOutputSurf->VPlaneOffset.iSurfaceOffset,
+        };
+        MOS_TraceEvent(EVENT_DECODE_DST_DUMPINFO, EVENT_TYPE_INFO, &eventData, sizeof(eventData), NULL, 0); 
+
+        ResourceAutoLock resLock(m_allocator, &m_tempOutputSurf->OsResource);
+        auto             pData = (uint8_t *)resLock.LockResourceForRead();
+        DECODE_CHK_NULL(pData);
+
+        MOS_TraceDataDump(
+            "Decode_OutputSurf",
+            0,
+            pData,
+            (uint32_t)m_tempOutputSurf->OsResource.pGmmResInfo->GetSizeMainSurface());
+        
+        m_allocator->UnLock(&m_tempOutputSurf->OsResource);
+    }
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS DecodePipeline::TraceDataDump2ndLevelBB(PMHW_BATCH_BUFFER batchBuffer)
+{
+    DECODE_FUNC_CALL();
+
+    DECODE_CHK_NULL(batchBuffer);
+    batchBuffer->iLastCurrent = batchBuffer->iSize * batchBuffer->count;
+    batchBuffer->dwOffset     = 0;
+
+    ResourceAutoLock resLock(m_allocator, &batchBuffer->OsResource);
+    auto             pData = (uint8_t *)resLock.LockResourceForRead();
+    DECODE_CHK_NULL(pData);
+
+    MOS_TraceDataDump(
+        "Decode_2ndLevelCmdBB",
+        0,
+        pData,
+        batchBuffer->iLastCurrent);
+
+    m_allocator->UnLock(&batchBuffer->OsResource);
+
+    return MOS_STATUS_SUCCESS;
+}
+#endif
+
 #if (_DEBUG || _RELEASE_INTERNAL)
 MOS_STATUS DecodePipeline::ReportVdboxIds(const DecodeStatusMfx& status)
 {
     DECODE_FUNC_CALL();
 
     // report the VDBOX IDs to user feature
-    uint32_t vdboxIds = ReadUserFeature(__MEDIA_USER_FEATURE_VALUE_VDBOX_ID_USED, m_osInterface->pOsContext).u32Data;
-
+    uint32_t vdboxIds = ReadUserFeature(m_userSettingPtr, "Used VDBOX ID", MediaUserSetting::Group::Sequence).Get<uint32_t>();
     for (auto i = 0; i < csInstanceIdMax; i++)
     {
         CsEngineId csEngineId;
@@ -505,7 +625,7 @@ MOS_STATUS DecodePipeline::StatusCheck()
     uint32_t completedCount = m_statusReport->GetCompletedCount();
     if (completedCount <= m_statusCheckCount)
     {
-        DECODE_CHK_COND(completedCount < m_statusCheckCount, "Invalid status check count");
+        DECODE_NORMALMESSAGE("Invalid status check count, completedCount = %d m_statusCheckCount =%d.", completedCount, m_statusCheckCount);
         return MOS_STATUS_SUCCESS;
     }
 
@@ -520,8 +640,11 @@ MOS_STATUS DecodePipeline::StatusCheck()
             DECODE_NORMALMESSAGE("Media reset may have occured at frame %d, status is %d, completedCount is %d.",
                 m_statusCheckCount, status.status, completedCount);
         }
+
         DECODE_NORMALMESSAGE("hucStatus2 is 0x%x at frame %d.", status.m_hucErrorStatus2, m_statusCheckCount);
         DECODE_NORMALMESSAGE("hucStatus is 0x%x at frame %d.", status.m_hucErrorStatus, m_statusCheckCount);
+
+        DECODE_CHK_STATUS(HwStatusCheck(status));
 
         DECODE_CHK_STATUS(ReportVdboxIds(status));
 
@@ -543,6 +666,14 @@ MOS_STATUS DecodePipeline::StatusCheck()
         m_debugInterface->m_bufferDumpFrameNum = bufferDumpNumTemp;
         m_debugInterface->m_currPic            = currPicTemp;
         m_debugInterface->m_frameType          = frameTypeTemp;
+#endif
+
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+        if (MOS_TraceKeyEnabled(TR_KEY_DECODE_DSTYUV))
+        {
+            const DecodeStatusReportData &reportETWData = statusReport->GetReportData(m_statusCheckCount);
+            DECODE_CHK_STATUS(TraceDataDumpOutput(reportETWData));
+        }
 #endif
 
         m_statusCheckCount++;

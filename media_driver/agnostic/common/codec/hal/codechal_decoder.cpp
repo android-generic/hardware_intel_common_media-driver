@@ -253,6 +253,10 @@ CodechalDecode::CodechalDecode (
 
     m_mode              = standardInfo->Mode;
     m_isHybridDecoder   = standardInfo->bIsHybridCodec ? true : false;
+
+    m_pCodechalOcaDumper = MOS_New(CodechalOcaDumper);
+    CODECHAL_DECODE_CHK_NULL_NO_STATUS_RETURN(m_pCodechalOcaDumper);
+
 #if (_DEBUG || _RELEASE_INTERNAL)
     AllocateDecodeOutputBuf();
 #endif
@@ -458,9 +462,11 @@ MOS_STATUS CodechalDecode::Allocate (CodechalSetting * codecHalSettings)
         m_decodeStatusBuf.m_hucErrorStatusRegOffset     = CODECHAL_OFFSETOF(CodechalDecodeStatus, m_hucErrorStatus) + sizeof(uint32_t);
 
         // Set IMEM Loaded bit (in DW1) to 1 by default in the first status buffer
-        // This bit will be changed later after storing register
+        // Set None Critical Error bit to 1 by default in the first status buffer
+        // These bits will be changed later after storing register
         if (m_hucInterface)
         {
+            m_decodeStatusBuf.m_decodeStatus->m_hucErrorStatus  = (uint64_t)m_hucInterface->GetHucStatusHevcS2lFailureMask() << 32;
             m_decodeStatusBuf.m_decodeStatus->m_hucErrorStatus2 = (uint64_t)m_hucInterface->GetHucStatus2ImemLoadedMask() << 32;
         }
 
@@ -865,7 +871,12 @@ CodechalDecode::~CodechalDecode()
         m_osInterface,
         &m_crcBuf);
 
-#if (_DEBUG || _RELEASE_INTERNAL)
+    if (m_pCodechalOcaDumper)
+    {
+        MOS_Delete(m_pCodechalOcaDumper);
+    }
+
+#if (_DEBUG || _RELEASE_INTERNAL) && (!WDDM_LINUX)
     m_debugInterface->PackGoldenReferences({m_debugInterface->GetCrcGoldenReference()});
     m_debugInterface->DumpGoldenReference();
 #endif
@@ -1435,16 +1446,30 @@ MOS_STATUS CodechalDecode::Execute(void *params)
             uint32_t yuvSize = 0;
 
             CheckDecodeOutputBufSize(*decodeParams->m_destSurface);
-
-            m_debugInterface->DumpYUVSurfaceToBuffer(decodeParams->m_destSurface,
-                m_decodeOutputBuf,
-                yuvSize);
-            uint32_t curIdx = (m_decodeStatusBuf.m_currIndex + CODECHAL_DECODE_STATUS_NUM - 1) % CODECHAL_DECODE_STATUS_NUM;
-            m_debugInterface->CaptureGoldenReference(m_decodeOutputBuf, yuvSize, m_decodeStatusBuf.m_decodeStatus[curIdx].m_mmioFrameCrcReg);
-            if (m_debugInterface->m_swCRC)
+            if (!m_debugInterface->m_swCRC)  //HW CRC
             {
+                uint32_t curIdx             = (m_decodeStatusBuf.m_currIndex + CODECHAL_DECODE_STATUS_NUM - 1) % CODECHAL_DECODE_STATUS_NUM;
+                while (true)
+                {
+                    uint32_t globalHWStoredData = *(m_decodeStatusBuf.m_data);
+                    uint32_t globalCount        = m_decodeStatusBuf.m_swStoreData - globalHWStoredData;
+                    uint32_t localCount         = m_decodeStatusBuf.m_decodeStatus[curIdx].m_swStoredData - globalHWStoredData;
+                    if (localCount == 0 || localCount > globalCount)  //Decode OK
+                    {
+                        m_debugInterface->CaptureGoldenReference(m_decodeOutputBuf, yuvSize, m_decodeStatusBuf.m_decodeStatus[curIdx].m_mmioFrameCrcReg);
+                        break;
+                    }
+                    MosUtilities::MosSleep(1);
+                }
+            }
+            else  //sw crc
+            {
+                m_debugInterface->DumpYUVSurfaceToBuffer(decodeParams->m_destSurface,
+                    m_decodeOutputBuf,
+                    yuvSize);
+                m_debugInterface->CaptureGoldenReference(m_decodeOutputBuf, yuvSize, 0);
                 std::vector<MOS_RESOURCE> vRes = {m_crcBuf};
-                m_debugInterface->DetectCorruptionSw(this, vRes, &m_frameCountTypeBuf, m_decodeOutputBuf, yuvSize, m_frameNum);
+                m_debugInterface->DetectCorruptionSw(vRes, &m_frameCountTypeBuf, m_decodeOutputBuf, yuvSize, m_frameNum);
             }
         }
 #endif
@@ -1516,7 +1541,7 @@ MOS_STATUS CodechalDecode::EndStatusReport(
     MHW_MI_STORE_REGISTER_MEM_PARAMS regParams;
     regParams.presStoreBuffer   = &m_decodeStatusBuf.m_statusBuffer;
     regParams.dwOffset          = errStatusOffset;
-    regParams.dwRegister        = (m_standard == CODECHAL_HEVC && mmioRegistersHcp) ?
+    regParams.dwRegister        = ((m_standard == CODECHAL_HEVC || m_standard == CODECHAL_VP9) && mmioRegistersHcp) ?
         mmioRegistersHcp->hcpCabacStatusRegOffset : mmioRegistersMfx->mfxErrorFlagsRegOffset;
     CODECHAL_DECODE_CHK_STATUS_RETURN(m_miInterface->AddMiStoreRegisterMemCmd(
         cmdBuffer,
@@ -1555,7 +1580,7 @@ MOS_STATUS CodechalDecode::EndStatusReport(
 
     regParams.presStoreBuffer   = &m_decodeStatusBuf.m_statusBuffer;
     regParams.dwOffset          = mbCountOffset;
-    regParams.dwRegister        = (m_standard == CODECHAL_HEVC && mmioRegistersHcp) ?
+    regParams.dwRegister        = ((m_standard == CODECHAL_HEVC || m_standard == CODECHAL_VP9) && mmioRegistersHcp) ?
         mmioRegistersHcp->hcpDecStatusRegOffset : mmioRegistersMfx->mfxMBCountRegOffset;
     CODECHAL_DECODE_CHK_STATUS_RETURN(m_miInterface->AddMiStoreRegisterMemCmd(
         cmdBuffer,
@@ -1748,10 +1773,11 @@ MOS_STATUS CodechalDecode::GetStatusReport(
                     // No problem in execution
                     codecStatus[j].m_codecStatus = CODECHAL_STATUS_SUCCESSFUL;
 
-                    if (m_standard == CODECHAL_HEVC)
+                    if (m_standard == CODECHAL_HEVC || m_standard == CODECHAL_VP9)
                     {
                         if ((m_decodeStatusBuf.m_decodeStatus[i].m_mmioErrorStatusReg &
-                             m_hcpInterface->GetHcpCabacErrorFlagsMask()) != 0)
+                             m_hcpInterface->GetHcpCabacErrorFlagsMask()) != 0
+                            && ((m_decodeStatusBuf.m_decodeStatus[i].m_mmioMBCountReg & 0xFFFC0000) >> 18) != 0)
                         {
                             codecStatus[j].m_codecStatus = CODECHAL_STATUS_ERROR;
                             codecStatus[j].m_numMbsAffected =

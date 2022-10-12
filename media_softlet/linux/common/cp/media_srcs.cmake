@@ -20,7 +20,6 @@
 
 set(TMP_SOURCES_
     ${CMAKE_CURRENT_LIST_DIR}/decodecp_interface.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/cp_streamout_interface.cpp
 )
 set(TMP_HEADERS_
     ${CMAKE_CURRENT_LIST_DIR}/decode_cp_bitstream.h
@@ -35,5 +34,4 @@ set(HEADERS_
     ${TMP_HEADERS_}
  )
 
-media_include_subdirectory(ddi)
 media_add_curr_to_include_path()

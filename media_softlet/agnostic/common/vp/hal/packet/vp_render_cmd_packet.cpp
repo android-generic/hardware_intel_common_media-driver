@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021, Intel Corporation
+* Copyright (c) 2021-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -31,6 +31,10 @@
 #include "hal_oca_interface.h"
 #include "vp_pipeline.h"
 #include "vp_packet_pipe.h"
+#include "vp_user_feature_control.h"
+#include "mhw_mi_itf.h"
+#include "mhw_mi_cmdpar.h"
+#include "vp_platform_interface.h"
 
 namespace vp
 {
@@ -67,6 +71,15 @@ VpRenderCmdPacket::VpRenderCmdPacket(MediaTask *task, PVP_MHWINTERFACE hwInterfa
                                                                                                                                                             m_firstFrame(true),
                                                                                                                                                             m_kernelSet(kernelSet)
 {
+    if (m_hwInterface && m_hwInterface->m_userFeatureControl)
+    {
+        bool computeContextEnabled = m_hwInterface->m_userFeatureControl->IsComputeContextEnabled();
+        m_PacketId = computeContextEnabled ? VP_PIPELINE_PACKET_COMPUTE : VP_PIPELINE_PACKET_RENDER;
+    }
+    else
+    {
+        VP_RENDER_ASSERTMESSAGE("m_hwInterface or m_hwInterface->m_userFeatureControl is nullptr!");
+    }
 }
 
 VpRenderCmdPacket::~VpRenderCmdPacket()
@@ -81,11 +94,63 @@ VpRenderCmdPacket::~VpRenderCmdPacket()
     MOS_Delete(m_surfMemCacheCtl);
 }
 
+MOS_STATUS VpRenderCmdPacket::Init()
+{
+    return RenderCmdPacket::Init();
+}
+
+MOS_STATUS VpRenderCmdPacket::LoadKernel()
+{
+    int32_t                     iKrnAllocation  = 0;
+    MHW_KERNEL_PARAM            MhwKernelParam  = {};
+    RENDERHAL_KERNEL_PARAM      KernelParam     = m_renderData.KernelParam;
+    // Load kernel to GSH
+    INIT_MHW_KERNEL_PARAM(MhwKernelParam, &m_renderData.KernelEntry);
+    UpdateKernelConfigParam(KernelParam);
+    iKrnAllocation = m_renderHal->pfnLoadKernel(
+        m_renderHal,
+        &KernelParam,
+        &MhwKernelParam,
+        m_kernel->GetCachedEntryForKernelLoad());
+
+    if (iKrnAllocation < 0)
+    {
+        RENDER_PACKET_ASSERTMESSAGE("kernel load failed");
+        return MOS_STATUS_UNKNOWN;
+    }
+
+    m_renderData.kernelAllocationID = iKrnAllocation;
+
+    if (m_renderData.iCurbeOffset < 0)
+    {
+        RENDER_PACKET_ASSERTMESSAGE("Curbe Set Fail, return error");
+        return MOS_STATUS_UNKNOWN;
+    }
+    // Allocate Media ID, link to kernel
+    m_renderData.mediaID = m_renderHal->pfnAllocateMediaID(
+        m_renderHal,
+        iKrnAllocation,
+        m_renderData.bindingTable,
+        m_renderData.iCurbeOffset,
+        (m_renderData.iCurbeLength),
+        0,
+        nullptr);
+
+    if (m_renderData.mediaID < 0)
+    {
+        RENDER_PACKET_ASSERTMESSAGE("Allocate Media ID failed, return error");
+        return MOS_STATUS_UNKNOWN;
+    }
+
+    return MOS_STATUS_SUCCESS;
+}
+
 MOS_STATUS VpRenderCmdPacket::Prepare()
 {
     VP_FUNC_CALL();
     VP_RENDER_CHK_NULL_RETURN(m_renderHal);
     VP_RENDER_CHK_NULL_RETURN(m_kernelSet);
+    VP_RENDER_CHK_NULL_RETURN(m_surfMemCacheCtl);
 
     if (m_packetResourcesdPrepared)
     {
@@ -93,22 +158,41 @@ MOS_STATUS VpRenderCmdPacket::Prepare()
         return MOS_STATUS_SUCCESS;
     }
 
-    m_PacketId = VP_PIPELINE_PACKET_RENDER;
-
     VP_RENDER_CHK_STATUS_RETURN(m_kernelSet->CreateKernelObjects(
         m_renderKernelParams,
         m_surfSetting.surfGroup,
         m_kernelSamplerStateGroup,
         m_kernelConfigs,
-        m_kernelObjs));
+        m_kernelObjs,
+        *m_surfMemCacheCtl,
+        m_packetSharedContext));
 
     if (m_submissionMode == MULTI_KERNELS_WITH_MULTI_MEDIA_STATES)
     {
+        m_kernelRenderData.clear();
+        VP_RENDER_CHK_NULL_RETURN(m_renderHal->pStateHeap);
+
+        m_renderHal->pStateHeap->iCurrentBindingTable = 0;
+        m_renderHal->pStateHeap->iCurrentSurfaceState = 0;
+
         for (auto it = m_kernelObjs.begin(); it != m_kernelObjs.end(); it++)
         {
             m_kernel = it->second;
+            VP_RENDER_CHK_NULL_RETURN(m_kernel);
+
+            m_kernel->SetCacheCntl(m_surfMemCacheCtl);
+
             // reset render Data for current kernel
             MOS_ZeroMemory(&m_renderData, sizeof(KERNEL_PACKET_RENDER_DATA));
+
+            if (m_bindingtableMode == MULTI_KERNELS_WITH_MULTI_BINDINGTABLES)
+            {
+                isMultiBindingTables = true;
+            }
+            else
+            {
+                isMultiBindingTables = false;
+            }
 
             VP_RENDER_CHK_STATUS_RETURN(RenderEngineSetup());
 
@@ -130,7 +214,7 @@ MOS_STATUS VpRenderCmdPacket::Prepare()
                 m_renderData.KernelParam.Thread_Count,
                 m_renderData.iCurbeLength,
                 m_renderData.iInlineLength,
-                nullptr));
+                m_renderData.scoreboardParams));
 
             m_kernelRenderData.insert(std::make_pair(it->first, m_renderData));
         }
@@ -140,10 +224,14 @@ MOS_STATUS VpRenderCmdPacket::Prepare()
         MOS_ZeroMemory(&m_renderData, sizeof(KERNEL_PACKET_RENDER_DATA));
         VP_RENDER_CHK_STATUS_RETURN(RenderEngineSetup());
 
+        m_kernelRenderData.clear();
+
         // for multi-kernel prepare together
         for (auto it = m_kernelObjs.begin(); it != m_kernelObjs.end(); it++)
         {
             m_kernel = it->second;
+            VP_RENDER_CHK_NULL_RETURN(m_kernel);
+
             if (it != m_kernelObjs.begin())
             {
                 // reset render Data for current kernel
@@ -177,7 +265,7 @@ MOS_STATUS VpRenderCmdPacket::Prepare()
             RENDERHAL_USE_MEDIA_THREADS_MAX,
             m_totalCurbeSize,
             m_totoalInlineSize,
-            nullptr));
+            m_renderData.scoreboardParams));
     }
     else
     {
@@ -193,10 +281,14 @@ MOS_STATUS VpRenderCmdPacket::SetupSamplerStates()
     VP_RENDER_CHK_NULL_RETURN(m_renderHal);
     VP_RENDER_CHK_NULL_RETURN(m_kernel);
 
-    KERNEL_SAMPLER_STATES samplerStates;
+    KERNEL_SAMPLER_STATES samplerStates = {};
 
-    // Initialize m_kernelSamplerStateGroup.
-    VP_RENDER_CHK_STATUS_RETURN(m_kernel->SetSamplerStates(m_kernelSamplerStateGroup));
+    // For AdvKernel, SetSamplerStates is called by VpRenderKernelObj::SetKernelConfigs
+    if (!m_kernel->IsAdvKernel())
+    {
+        // Initialize m_kernelSamplerStateGroup.
+        VP_RENDER_CHK_STATUS_RETURN(m_kernel->SetSamplerStates(m_kernelSamplerStateGroup));
+    }
 
     for (int samplerIndex = 0, activeSamplerLeft = m_kernelSamplerStateGroup.size(); activeSamplerLeft > 0; ++samplerIndex)
     {
@@ -238,8 +330,14 @@ MOS_STATUS VpRenderCmdPacket::Submit(MOS_COMMAND_BUFFER *commandBuffer, uint8_t 
         VP_RENDER_ASSERTMESSAGE("No Kernel Object Creation");
         return MOS_STATUS_NULL_POINTER;
     }
+    if (m_submissionMode == MULTI_KERNELS_WITH_MULTI_MEDIA_STATES   &&
+        m_bindingtableMode == MULTI_KERNELS_WITH_MULTI_BINDINGTABLES)
+    {
+        VP_RENDER_CHK_STATUS_RETURN(SetupMediaWalker());
 
-    if (m_submissionMode == MULTI_KERNELS_WITH_MULTI_MEDIA_STATES)
+        VP_RENDER_CHK_STATUS_RETURN(SubmitWithMultiKernel(commandBuffer, packetPhase));
+    }
+    else if (m_submissionMode == MULTI_KERNELS_WITH_MULTI_MEDIA_STATES)
     {
         VP_RENDER_CHK_STATUS_RETURN(SetupMediaWalker());
 
@@ -254,10 +352,48 @@ MOS_STATUS VpRenderCmdPacket::Submit(MOS_COMMAND_BUFFER *commandBuffer, uint8_t 
         return MOS_STATUS_INVALID_PARAMETER;
     }
 
-    if (!m_surfSetting.dumpLaceSurface)
+    if (!m_surfSetting.dumpLaceSurface &&
+        !m_surfSetting.dumpPostSurface)
     {
         VP_RENDER_CHK_STATUS_RETURN(m_kernelSet->DestroyKernelObjects(m_kernelObjs));
     }
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpRenderCmdPacket::InitFcMemCacheControlForTarget(PVP_RENDER_CACHE_CNTL settings)
+{
+    MOS_HW_RESOURCE_DEF                 Usage           = MOS_HW_RESOURCE_DEF_MAX;
+    MEMORY_OBJECT_CONTROL_STATE         MemObjCtrl      = {};
+    PMOS_INTERFACE                      pOsInterface    = m_osInterface;
+
+    VP_RENDER_CHK_NULL_RETURN(pOsInterface);
+    VP_RENDER_CHK_NULL_RETURN(settings);
+
+    VPHAL_SET_SURF_MEMOBJCTL(settings->Composite.TargetSurfMemObjCtl,         MOS_MP_RESOURCE_USAGE_DEFAULT_RCS);
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpRenderCmdPacket::InitFcMemCacheControl(PVP_RENDER_CACHE_CNTL settings)
+{
+    MOS_HW_RESOURCE_DEF                 Usage           = MOS_HW_RESOURCE_DEF_MAX;
+    MEMORY_OBJECT_CONTROL_STATE         MemObjCtrl      = {};
+    PMOS_INTERFACE                      pOsInterface    = m_osInterface;
+
+    VP_RENDER_CHK_NULL_RETURN(settings);
+
+    if (!settings->bCompositing)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
+    settings->Composite.bL3CachingEnabled = true;
+
+    VPHAL_SET_SURF_MEMOBJCTL(settings->Composite.PrimaryInputSurfMemObjCtl,   MOS_MP_RESOURCE_USAGE_SurfaceState_RCS);
+    VPHAL_SET_SURF_MEMOBJCTL(settings->Composite.InputSurfMemObjCtl,          MOS_MP_RESOURCE_USAGE_SurfaceState_RCS);
+
+    VP_RENDER_CHK_STATUS_RETURN(InitFcMemCacheControlForTarget(settings));
 
     return MOS_STATUS_SUCCESS;
 }
@@ -267,26 +403,29 @@ MOS_STATUS VpRenderCmdPacket::InitSurfMemCacheControl(VP_EXECUTE_CAPS packetCaps
     MOS_HW_RESOURCE_DEF                 Usage           = MOS_HW_RESOURCE_DEF_MAX;
     MEMORY_OBJECT_CONTROL_STATE         MemObjCtrl      = {};
     PMOS_INTERFACE                      pOsInterface    = nullptr;
-    PVP_VEBOX_CACHE_CNTL                pSettings       = nullptr;
+    PVP_RENDER_CACHE_CNTL               pSettings       = nullptr;
 
     VP_FUNC_CALL();
 
     if (nullptr == m_surfMemCacheCtl)
     {
-        m_surfMemCacheCtl = MOS_New(VP_VEBOX_CACHE_CNTL);
+        m_surfMemCacheCtl = MOS_New(VP_RENDER_CACHE_CNTL);
+        VP_PUBLIC_CHK_NULL_RETURN(m_surfMemCacheCtl);
     }
 
-    VP_PUBLIC_CHK_NULL_RETURN(m_surfMemCacheCtl);
     VP_PUBLIC_CHK_NULL_RETURN(m_hwInterface);
     VP_PUBLIC_CHK_NULL_RETURN(m_hwInterface->m_osInterface);
 
-    MOS_ZeroMemory(m_surfMemCacheCtl, sizeof(VP_VEBOX_CACHE_CNTL));
+    MOS_ZeroMemory(m_surfMemCacheCtl, sizeof(*m_surfMemCacheCtl));
 
     pOsInterface    = m_hwInterface->m_osInterface;
     pSettings       = m_surfMemCacheCtl;
 
+    pSettings->bCompositing = packetCaps.bComposite;
     pSettings->bDnDi = true;
     pSettings->bLace = MEDIA_IS_SKU(m_hwInterface->m_skuTable, FtrLace);
+
+    VP_RENDER_CHK_STATUS_RETURN(InitFcMemCacheControl(pSettings));
 
     if (pSettings->bDnDi)
     {
@@ -315,6 +454,24 @@ MOS_STATUS VpRenderCmdPacket::InitSurfMemCacheControl(VP_EXECUTE_CAPS packetCaps
         VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.LaceLookUpTablesSurfMemObjCtl,    MOS_MP_RESOURCE_USAGE_SurfaceState);
         VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.Vebox3DLookUpTablesSurfMemObjCtl, MOS_MP_RESOURCE_USAGE_SurfaceState);
     }
+    else
+    {
+        pSettings->DnDi.bL3CachingEnabled = false;
+
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.CurrentInputSurfMemObjCtl,        MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.PreviousInputSurfMemObjCtl,       MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.STMMInputSurfMemObjCtl,           MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.STMMOutputSurfMemObjCtl,          MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.DnOutSurfMemObjCtl,               MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.CurrentOutputSurfMemObjCtl,       MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.StatisticsOutputSurfMemObjCtl,    MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.AlphaOrVignetteSurfMemObjCtl,     MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.LaceOrAceOrRgbHistogramSurfCtrl,  MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.SkinScoreSurfMemObjCtl,           MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.LaceLookUpTablesSurfMemObjCtl,    MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->DnDi.Vebox3DLookUpTablesSurfMemObjCtl, MOS_MP_RESOURCE_USAGE_DEFAULT);
+    }
+
     if (pSettings->bLace)
     {
         VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.FrameHistogramSurfaceMemObjCtl,      MOS_MP_RESOURCE_USAGE_SurfaceState);
@@ -324,6 +481,17 @@ MOS_STATUS VpRenderCmdPacket::InitSurfMemCacheControl(VP_EXECUTE_CAPS packetCaps
         VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.PwlfOutSurfaceMemObjCtl,             MOS_MP_RESOURCE_USAGE_SurfaceState);
         VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.WeitCoefSurfaceMemObjCtl,            MOS_MP_RESOURCE_USAGE_SurfaceState);
     }
+    else
+    {
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.FrameHistogramSurfaceMemObjCtl,                       MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.AggregatedHistogramSurfaceMemObjCtl,                  MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.StdStatisticsSurfaceMemObjCtl,                        MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.PwlfInSurfaceMemObjCtl,                               MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.PwlfOutSurfaceMemObjCtl,                              MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.WeitCoefSurfaceMemObjCtl,                             MOS_MP_RESOURCE_USAGE_DEFAULT);
+        VPHAL_SET_SURF_MEMOBJCTL(pSettings->Lace.GlobalToneMappingCurveLUTSurfaceMemObjCtl,            MOS_MP_RESOURCE_USAGE_DEFAULT);
+    }
+
 
     return MOS_STATUS_SUCCESS;
 }
@@ -341,6 +509,7 @@ MOS_STATUS VpRenderCmdPacket::PacketInit(
     VP_UNUSED(inputSurface);
     VP_UNUSED(outputSurface);
     VP_UNUSED(previousSurface);
+    VP_RENDER_CHK_NULL_RETURN(m_renderHal);
 
     m_PacketCaps = packetCaps;
 
@@ -348,7 +517,11 @@ MOS_STATUS VpRenderCmdPacket::PacketInit(
     m_surfSetting = surfSetting;
 
     m_packetResourcesdPrepared = false;
+    m_kernelConfigs.clear();
     m_renderKernelParams.clear();
+
+    m_renderHal->eufusionBypass = false;
+    m_totoalInlineSize = 0;
 
     VP_RENDER_CHK_STATUS_RETURN(InitSurfMemCacheControl(packetCaps));
 
@@ -372,6 +545,8 @@ MOS_STATUS VpRenderCmdPacket::KernelStateSetup()
     // set the Inline Data length
     m_renderData.iInlineLength = (int32_t)m_kernel->GetInlineDataSize();
     m_totoalInlineSize += m_renderData.iInlineLength;
+
+    VP_RENDER_CHK_STATUS_RETURN(m_kernel->GetScoreboardParams(m_renderData.scoreboardParams));
 
     return MOS_STATUS_SUCCESS;
 }
@@ -406,12 +581,12 @@ MOS_STATUS VpRenderCmdPacket::SetupSurfaceState()
                 renderSurfaceParams.bWidth16Align    = false;
                 renderSurfaceParams.bWidthInDword_Y  = true;
                 renderSurfaceParams.bWidthInDword_UV = true;
-            }
 
-            //set mem object control for cache
-            renderSurfaceParams.MemObjCtl = (m_renderHal->pOsInterface->pfnCachePolicyGetMemoryObject(
-                MOS_MP_RESOURCE_USAGE_DEFAULT,
-                m_renderHal->pOsInterface->pfnGetGmmClientContext(m_renderHal->pOsInterface))).DwordValue;
+                //set mem object control for cache
+                renderSurfaceParams.MemObjCtl = (m_renderHal->pOsInterface->pfnCachePolicyGetMemoryObject(
+                    MOS_MP_RESOURCE_USAGE_DEFAULT,
+                    m_renderHal->pOsInterface->pfnGetGmmClientContext(m_renderHal->pOsInterface))).DwordValue;
+            }
 
             VP_SURFACE *vpSurface = nullptr;
 
@@ -422,16 +597,34 @@ MOS_STATUS VpRenderCmdPacket::SetupSurfaceState()
 
             if (vpSurface)
             {
-                // Prepare surfaces tracked in Resource manager
-                VP_RENDER_CHK_STATUS_RETURN(InitRenderHalSurface(*vpSurface, renderHalSurface));
+                MOS_STATUS status = m_kernel->InitRenderHalSurface(type, vpSurface, &renderHalSurface);
+                if (MOS_STATUS_UNIMPLEMENTED == status)
+                {
+                    // Prepare surfaces tracked in Resource manager
+                    VP_RENDER_CHK_STATUS_RETURN(InitRenderHalSurface(*vpSurface, renderHalSurface));
+                    VP_RENDER_CHK_STATUS_RETURN(UpdateRenderSurface(renderHalSurface, *kernelSurfaceParam));
+                }
+                else
+                {
+                    VP_RENDER_CHK_STATUS_RETURN(status);
+                }
+                if (SurfaceTypeFcCscCoeff == type)
+                {
+                    m_renderHal->bCmfcCoeffUpdate  = true;
+                    m_renderHal->pCmfcCoeffSurface = &vpSurface->osSurface->OsResource;
+                }
+                else
+                {
+                    m_renderHal->bCmfcCoeffUpdate  = false;
+                    m_renderHal->pCmfcCoeffSurface = nullptr;
+                }
             }
             else
             {
                 // State Heaps are not tracked in resource manager till now
                 VP_RENDER_CHK_STATUS_RETURN(InitStateHeapSurface(type, renderHalSurface));
+                VP_RENDER_CHK_STATUS_RETURN(UpdateRenderSurface(renderHalSurface, *kernelSurfaceParam));
             }
-
-            VP_RENDER_CHK_STATUS_RETURN(UpdateRenderSurface(renderHalSurface, *kernelSurfaceParam));
 
             uint32_t index = 0;
 
@@ -481,9 +674,9 @@ MOS_STATUS VpRenderCmdPacket::SetupSurfaceState()
                         renderSurfaceParams.bRenderTarget);
                 }
             }
-            VP_RENDER_CHK_STATUS_RETURN(m_kernel->UpdateCompParams());
             VP_RENDER_CHK_STATUS_RETURN(m_kernel->UpdateCurbeBindingIndex(type, index));
         }
+        VP_RENDER_CHK_STATUS_RETURN(m_kernel->UpdateCompParams());
     }
 
     return MOS_STATUS_SUCCESS;
@@ -497,7 +690,9 @@ MOS_STATUS VpRenderCmdPacket::SetupCurbeState()
     // set the Curbe Data length
     void *   curbeData   = nullptr;
     uint32_t curbeLength = 0;
-    VP_RENDER_CHK_STATUS_RETURN(m_kernel->GetCurbeState(curbeData, curbeLength));
+    uint32_t curbeLengthAligned = 0;
+
+    VP_RENDER_CHK_STATUS_RETURN(m_kernel->GetCurbeState(curbeData, curbeLength, curbeLengthAligned, m_renderData.KernelParam, m_renderHal->dwCurbeBlockAlign));
 
     m_renderData.iCurbeOffset = m_renderHal->pfnLoadCurbeData(
         m_renderHal,
@@ -511,7 +706,8 @@ MOS_STATUS VpRenderCmdPacket::SetupCurbeState()
         return MOS_STATUS_UNKNOWN;
     }
 
-    m_renderData.iCurbeLength = MOS_ALIGN_CEIL(curbeLength, m_renderHal->dwCurbeBlockAlign);
+    m_renderData.iCurbeLength = curbeLengthAligned;
+ 
     m_totalCurbeSize += m_renderData.iCurbeLength;
 
     m_kernel->FreeCurbe(curbeData);
@@ -570,6 +766,30 @@ void VpRenderCmdPacket::UpdateKernelConfigParam(RENDERHAL_KERNEL_PARAM &kernelPa
     // No need update here.
 }
 
+void VpRenderCmdPacket::OcaDumpDbgInfo(MOS_COMMAND_BUFFER &cmdBuffer, MOS_CONTEXT &mosContext)
+{
+    // Add kernel info to log.
+    for (auto it = m_kernelObjs.begin(); it != m_kernelObjs.end(); it++)
+    {
+        auto kernel = it->second;
+        if (kernel)
+        {
+            kernel->OcaDumpKernelInfo(cmdBuffer, mosContext);
+        }
+        else
+        {
+            VP_RENDER_ASSERTMESSAGE("nullptr in m_kernelObjs!");
+        }
+    }
+    // Add vphal param to log.
+    HalOcaInterface::DumpVphalParam(cmdBuffer, mosContext, m_renderHal->pVphalOcaDumper);
+}
+
+MOS_STATUS VpRenderCmdPacket::SetMediaFrameTracking(RENDERHAL_GENERIC_PROLOG_PARAMS &genericPrologParams)
+{
+    return VpCmdPacket::SetMediaFrameTracking(genericPrologParams);
+}
+
 MOS_STATUS VpRenderCmdPacket::InitRenderHalSurface(VP_SURFACE &surface, RENDERHAL_SURFACE &renderSurface)
 {
     VP_FUNC_CALL();
@@ -588,18 +808,20 @@ MOS_STATUS VpRenderCmdPacket::InitStateHeapSurface(SurfaceType type, RENDERHAL_S
 {
     VP_FUNC_CALL();
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
-
     MOS_SURFACE mosSurface;
 
     MOS_ZeroMemory(&mosSurface, sizeof(MOS_SURFACE));
 
     // Check for Vebox Heap readiness
     const MHW_VEBOX_HEAP *pVeboxHeap = nullptr;
-    VP_RENDER_CHK_NULL_RETURN(m_hwInterface);
-    VP_RENDER_CHK_NULL_RETURN(m_hwInterface->m_veboxInterface);
+    std::shared_ptr<mhw::vebox::Itf> veboxItf = nullptr;
 
-    VP_RENDER_CHK_STATUS_RETURN(m_hwInterface->m_veboxInterface->GetVeboxHeapInfo(
+    VP_RENDER_CHK_NULL_RETURN(m_hwInterface);
+
+    VP_PUBLIC_CHK_STATUS_RETURN(m_hwInterface->m_vpPlatformInterface->GetVeboxHeapInfo(
+        m_hwInterface,
         &pVeboxHeap));
+
     VP_RENDER_CHK_NULL_RETURN(pVeboxHeap);
 
     switch (type)
@@ -654,6 +876,11 @@ MOS_STATUS VpRenderCmdPacket::UpdateRenderSurface(RENDERHAL_SURFACE_NEXT &render
         }
 
         renderSurface.OsSurface.Format = (overwriteParam.format != 0) ? overwriteParam.format : renderSurface.OsSurface.Format;
+
+        if (0 == renderSurface.OsSurface.dwQPitch)
+        {
+            renderSurface.OsSurface.dwQPitch = renderSurface.OsSurface.dwHeight;
+        }
     }
 
     return MOS_STATUS_SUCCESS;
@@ -1098,7 +1325,7 @@ MOS_STATUS VpRenderCmdPacket::CalcPolyphaseTablesUV(
         for (j = 0; j < MHW_SCALER_UV_WIN_SIZE; ++j)
         {
             pos           = base + (double)j;
-            phaseCoefs[j] = MOS_Lanczos((float)(pos * sf), MHW_SCALER_UV_WIN_SIZE, fLanczosT);
+            phaseCoefs[j] = MosUtilities::MosLanczos((float)(pos * sf), MHW_SCALER_UV_WIN_SIZE, fLanczosT);
             sumCoefs += phaseCoefs[j];
         }
         // Normalize coefs and save
@@ -1211,11 +1438,11 @@ MOS_STATUS VpRenderCmdPacket::CalcPolyphaseTablesY(
 
             if (bUse8x8Filter)
             {
-                fPhaseCoefs[j] = fPhaseCoefsCopy[j] = MOS_Lanczos(fPos * fScaleFactor, dwNumEntries, fLanczosT);
+                fPhaseCoefs[j] = fPhaseCoefsCopy[j] = MosUtilities::MosLanczos(fPos * fScaleFactor, dwNumEntries, fLanczosT);
             }
             else
             {
-                fPhaseCoefs[j] = fPhaseCoefsCopy[j] = MOS_Lanczos_g(fPos * fScaleFactor, NUM_POLYPHASE_5x5_Y_ENTRIES, fLanczosT);
+                fPhaseCoefs[j] = fPhaseCoefsCopy[j] = MosUtilities::MosLanczosG(fPos * fScaleFactor, NUM_POLYPHASE_5x5_Y_ENTRIES, fLanczosT);
             }
 
             fSumCoefs += fPhaseCoefs[j];
@@ -1232,7 +1459,7 @@ MOS_STATUS VpRenderCmdPacket::CalcPolyphaseTablesY(
             {
                 fHPHalfPhase = (float)(NUM_POLYPHASE_TABLES - i) / (float)NUM_POLYPHASE_TABLES;
             }
-            fHPFilter[0] = fHPFilter[2] = -fHPStrength * MOS_Sinc(fHPHalfPhase * MOS_PI);
+            fHPFilter[0] = fHPFilter[2] = -fHPStrength * MosUtilities::MosSinc(fHPHalfPhase * MOS_PI);
             fHPFilter[1]                = 1.0F + 2.0F * fHPStrength;
 
             for (j = 0; j < dwNumEntries; j++)
@@ -1318,7 +1545,7 @@ MOS_STATUS VpRenderCmdPacket::CalcPolyphaseTablesUVOffset(
         for (j = 0; j < MHW_SCALER_UV_WIN_SIZE; ++j)
         {
             pos           = base + (double)j;
-            phaseCoefs[j] = MOS_Lanczos((float)(pos * sf), 6 /*MHW_SCALER_UV_WIN_SIZE*/, fLanczosT);
+            phaseCoefs[j] = MosUtilities::MosLanczos((float)(pos * sf), 6 /*MHW_SCALER_UV_WIN_SIZE*/, fLanczosT);
             sumCoefs += phaseCoefs[j];
         }
         // Normalize coefs and save
@@ -1370,6 +1597,7 @@ MOS_STATUS VpRenderCmdPacket::SubmitWithMultiKernel(MOS_COMMAND_BUFFER *commandB
     MediaPerfProfiler *             pPerfProfiler       = nullptr;
     MOS_CONTEXT *                   pOsContext          = nullptr;
     PMHW_MI_MMIOREGISTERS           pMmioRegisters      = nullptr;
+    std::shared_ptr<mhw::mi::Itf>   m_miItf             = nullptr;
 
     RENDER_PACKET_CHK_NULL_RETURN(m_renderHal);
     RENDER_PACKET_CHK_NULL_RETURN(m_renderHal->pMhwRenderInterface);
@@ -1389,6 +1617,8 @@ MOS_STATUS VpRenderCmdPacket::SubmitWithMultiKernel(MOS_COMMAND_BUFFER *commandB
     pMmioRegisters  = pMhwRender->GetMmioRegisters();
 
     RENDER_PACKET_CHK_STATUS_RETURN(SetPowerMode(kernelCombinedFc));
+
+    RENDER_PACKET_CHK_STATUS_RETURN(SetMediaFrameTracking(GenericPrologParams));
 
     // Initialize command buffer and insert prolog
     RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnInitCommandBuffer(m_renderHal, commandBuffer, &GenericPrologParams));
@@ -1418,14 +1648,29 @@ MOS_STATUS VpRenderCmdPacket::SubmitWithMultiKernel(MOS_COMMAND_BUFFER *commandB
     // Write timing data for 3P budget
     RENDER_PACKET_CHK_STATUS_RETURN(m_renderHal->pfnSendTimingData(m_renderHal, commandBuffer, false));
 
-    MHW_PIPE_CONTROL_PARAMS PipeControlParams;
+    if (m_miItf)
+    {
+        SETPAR_AND_ADDCMD(PIPE_CONTROL, m_miItf, commandBuffer);
+    }
+    else
+    {
+        MHW_PIPE_CONTROL_PARAMS PipeControlParams;
 
-    MOS_ZeroMemory(&PipeControlParams, sizeof(PipeControlParams));
-    PipeControlParams.dwFlushMode                   = MHW_FLUSH_WRITE_CACHE;
-    PipeControlParams.bGenericMediaStateClear       = true;
-    PipeControlParams.bIndirectStatePointersDisable = true;
-    PipeControlParams.bDisableCSStall               = false;
-    RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddPipeControl(commandBuffer, nullptr, &PipeControlParams));
+        MOS_ZeroMemory(&PipeControlParams, sizeof(PipeControlParams));
+        PipeControlParams.dwFlushMode                   = MHW_FLUSH_WRITE_CACHE;
+        PipeControlParams.bGenericMediaStateClear       = true;
+        PipeControlParams.bIndirectStatePointersDisable = true;
+        PipeControlParams.bDisableCSStall               = false;
+
+        RENDER_PACKET_CHK_NULL_RETURN(pOsInterface->pfnGetSkuTable);
+        auto *skuTable = pOsInterface->pfnGetSkuTable(pOsInterface);
+        if (skuTable && MEDIA_IS_SKU(skuTable, FtrEnablePPCFlush))
+        {
+            // Add PPC fulsh
+            PipeControlParams.bPPCFlush = true;
+        }
+        RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddPipeControl(commandBuffer, nullptr, &PipeControlParams));
+    }
 
     if (MEDIA_IS_WA(m_renderHal->pWaTable, WaSendDummyVFEafterPipelineSelect))
     {
@@ -1446,7 +1691,14 @@ MOS_STATUS VpRenderCmdPacket::SubmitWithMultiKernel(MOS_COMMAND_BUFFER *commandB
         {
             RENDER_PACKET_ASSERTMESSAGE("ERROR, pWalkerParams is nullptr and cannot get InterfaceDescriptorOffset.");
         }
-        RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddMediaStateFlush(commandBuffer, nullptr, &FlushParam));
+        if (m_miItf)
+        {
+            SETPAR_AND_ADDCMD(MEDIA_STATE_FLUSH, m_miItf, commandBuffer);
+        }
+        else
+        {
+            RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddMediaStateFlush(commandBuffer, nullptr, &FlushParam));
+        }
     }
     else if (MEDIA_IS_WA(m_renderHal->pWaTable, WaAddMediaStateFlushCmd))
     {
@@ -1456,16 +1708,37 @@ MOS_STATUS VpRenderCmdPacket::SubmitWithMultiKernel(MOS_COMMAND_BUFFER *commandB
     if (pBatchBuffer)
     {
         // Send Batch Buffer end command (HW/OS dependent)
-        RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddMiBatchBufferEnd(commandBuffer, nullptr));
+        if (m_miItf)
+        {
+            m_miItf->AddMiBatchBufferEnd(commandBuffer, nullptr);
+        }
+        else
+        {
+            RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddMiBatchBufferEnd(commandBuffer, nullptr));
+        }
     }
     else if (IsMiBBEndNeeded(pOsInterface))
     {
         // Send Batch Buffer end command for 1st level Batch Buffer
-        RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddMiBatchBufferEnd(commandBuffer, nullptr));
+        if (m_miItf)
+        {
+            m_miItf->AddMiBatchBufferEnd(commandBuffer, nullptr);
+        }
+        else
+        {
+            RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddMiBatchBufferEnd(commandBuffer, nullptr));
+        }
     }
     else if (m_renderHal->pOsInterface->bNoParsingAssistanceInKmd)
     {
-        RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddMiBatchBufferEnd(commandBuffer, nullptr));
+        if (m_miItf)
+        {
+            m_miItf->AddMiBatchBufferEnd(commandBuffer, nullptr);
+        }
+        else
+        {
+            RENDER_PACKET_CHK_STATUS_RETURN(pMhwMiInterface->AddMiBatchBufferEnd(commandBuffer, nullptr));
+        }
     }
 
     // Return unused command buffer space to OS
@@ -1500,6 +1773,42 @@ MOS_STATUS VpRenderCmdPacket::DumpOutput()
     return MOS_STATUS_SUCCESS;
 }
 
+void VpRenderCmdPacket::PrintWalkerParas(MHW_WALKER_PARAMS &WalkerParams)
+{
+#if (_DEBUG || _RELEASE_INTERNAL)
+    VP_RENDER_VERBOSEMESSAGE("WalkerParams: InterfaceDescriptorOffset = %x, CmWalkerEnable = %x, ColorCountMinusOne = %x, UseScoreboard = %x, ScoreboardMask = %x, MidLoopUnitX = %x, MidLoopUnitY = %x, MiddleLoopExtraSteps = %x",
+        WalkerParams.InterfaceDescriptorOffset,
+        WalkerParams.CmWalkerEnable,
+        WalkerParams.ColorCountMinusOne,
+        WalkerParams.UseScoreboard,
+        WalkerParams.ScoreboardMask,
+        WalkerParams.MidLoopUnitX,
+        WalkerParams.MidLoopUnitY,
+        WalkerParams.MiddleLoopExtraSteps);
+    VP_RENDER_VERBOSEMESSAGE("WalkerParams: GroupIdLoopSelect = %x, InlineDataLength = %x, pInlineData = %x, dwLocalLoopExecCount = %x, dwGlobalLoopExecCount = %x, WalkerMode = %x, BlockResolution = %x, LocalStart = %x",
+        WalkerParams.GroupIdLoopSelect,
+        WalkerParams.InlineDataLength,
+        WalkerParams.pInlineData,
+        WalkerParams.dwLocalLoopExecCount,
+        WalkerParams.dwGlobalLoopExecCount,
+        WalkerParams.WalkerMode,
+        WalkerParams.BlockResolution,
+        WalkerParams.LocalStart);
+    VP_RENDER_VERBOSEMESSAGE("WalkerParams: LocalEnd = %x, LocalOutLoopStride = %x, LocalInnerLoopUnit = %x, GlobalResolution = %x, GlobalStart = %x, GlobalOutlerLoopStride = %x, GlobalInnerLoopUnit = %x, bAddMediaFlush = %x, bRequestSingleSlice = %x, IndirectDataLength = %x, IndirectDataStartAddress = %x",
+        WalkerParams.LocalEnd,
+        WalkerParams.LocalOutLoopStride,
+        WalkerParams.LocalInnerLoopUnit,
+        WalkerParams.GlobalResolution,
+        WalkerParams.GlobalStart,
+        WalkerParams.GlobalOutlerLoopStride,
+        WalkerParams.GlobalInnerLoopUnit,
+        WalkerParams.bAddMediaFlush,
+        WalkerParams.bRequestSingleSlice,
+        WalkerParams.IndirectDataLength,
+        WalkerParams.IndirectDataStartAddress);
+#endif
+}
+
 MOS_STATUS VpRenderCmdPacket::SendMediaStates(
     PRENDERHAL_INTERFACE pRenderHal,
     PMOS_COMMAND_BUFFER  pCmdBuffer)
@@ -1532,11 +1841,6 @@ MOS_STATUS VpRenderCmdPacket::SendMediaStates(
     pStateHeap      = pRenderHal->pStateHeap;
     pOsContext      = pOsInterface->pOsContext;
     pMmioRegisters  = pMhwRender->GetMmioRegisters();
-
-    // This need not be secure, since PPGTT will be used here. But moving this after
-    // L3 cache configuration will delay UMD from fetching another media state.
-    // Send Sync Tag
-    MHW_RENDERHAL_CHK_STATUS(pRenderHal->pfnSendSyncTag(pRenderHal, pCmdBuffer));
 
     // Setup L3$ Config, LRI commands used here & hence must be launched from a secure bb
     pRenderHal->L3CacheSettings.bEnableSLM = (m_walkerType == WALKER_TYPE_COMPUTE && m_slmSize > 0) ? true : false;
@@ -1633,6 +1937,8 @@ MOS_STATUS VpRenderCmdPacket::SendMediaStates(
             MHW_RENDERHAL_CHK_STATUS(pMhwRender->AddMediaObjectWalkerCmd(
                 pCmdBuffer,
                 &m_mediaWalkerParams));
+
+            PrintWalkerParas(m_mediaWalkerParams);
         }
         else if (m_walkerType == WALKER_TYPE_COMPUTE)
         {
@@ -1640,10 +1946,20 @@ MOS_STATUS VpRenderCmdPacket::SendMediaStates(
 
             MHW_RENDERHAL_CHK_STATUS(PrepareComputeWalkerParams(it->second.walkerParam, m_gpgpuWalkerParams));
 
+            if (m_submissionMode == MULTI_KERNELS_WITH_MULTI_MEDIA_STATES && m_bindingtableMode == MULTI_KERNELS_WITH_MULTI_BINDINGTABLES)
+            {
+                pRenderHal->pStateHeap->pCurMediaState = it->second.mediaState;
+                MHW_RENDERHAL_CHK_NULL(pRenderHal->pStateHeap->pCurMediaState);
+                pRenderHal->iKernelAllocationID        = it->second.kernelAllocationID;
+                pRenderHal->pStateHeap->pCurMediaState->bBusy = true;
+            }
+
             MHW_RENDERHAL_CHK_STATUS(pRenderHal->pRenderHalPltInterface->SendComputeWalker(
                 pRenderHal,
                 pCmdBuffer,
                 &m_gpgpuWalkerParams));
+
+             PrintWalkerParas(m_mediaWalkerParams);
         }
         else
         {
@@ -1652,6 +1968,13 @@ MOS_STATUS VpRenderCmdPacket::SendMediaStates(
         }
     }
 
+    // This need not be secure, since PPGTT will be used here. But moving this after
+    // L3 cache configuration will delay UMD from fetching another media state.
+    // Send Sync Tag
+    MHW_RENDERHAL_CHK_STATUS(pRenderHal->pfnSendSyncTag(pRenderHal, pCmdBuffer));
+
+    m_kernelRenderData.clear();
+
 finish:
     return eStatus;
 }
@@ -1659,6 +1982,82 @@ finish:
 MOS_STATUS VpRenderCmdPacket::SetDiFmdParams(PRENDER_DI_FMD_PARAMS params)
 {
     VP_FUNC_CALL();
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpRenderCmdPacket::SetFcParams(PRENDER_FC_PARAMS params)
+{
+    VP_FUNC_CALL();
+    VP_RENDER_CHK_NULL_RETURN(params);
+
+    m_kernelConfigs.insert(std::make_pair(params->kernelId, (void *)params));
+
+    KERNEL_PARAMS kernelParams = {};
+    kernelParams.kernelId      = params->kernelId;
+    m_renderKernelParams.push_back(kernelParams);
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpRenderCmdPacket::SetHdr3DLutParams(
+    PRENDER_HDR_3DLUT_CAL_PARAMS params)
+{
+    VP_FUNC_CALL();
+    VP_RENDER_CHK_NULL_RETURN(params);
+
+    m_kernelConfigs.insert(std::make_pair(params->kernelId, (void *)params));
+
+    KERNEL_PARAMS kernelParams = {};
+    kernelParams.kernelId = params->kernelId;
+    // kernelArgs will be initialized in VpRenderHdr3DLutKernel::Init with
+    // kernel.GetKernelArgs().
+    kernelParams.kernelThreadSpace.uWidth = params->threadWidth;
+    kernelParams.kernelThreadSpace.uHeight = params->threadHeight;
+    kernelParams.kernelArgs = params->kernelArgs;
+    kernelParams.syncFlag = true;
+    m_renderKernelParams.push_back(kernelParams);
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MHW_SETPAR_DECL_SRC(PIPE_CONTROL, VpRenderCmdPacket)
+{
+    MOS_ZeroMemory(&params, sizeof(params));
+    params.dwFlushMode                   = MHW_FLUSH_WRITE_CACHE;
+    params.bGenericMediaStateClear       = true;
+    params.bIndirectStatePointersDisable = true;
+    params.bDisableCSStall               = false;
+
+    RENDER_PACKET_CHK_NULL_RETURN(m_osInterface);
+    RENDER_PACKET_CHK_NULL_RETURN(m_osInterface->pfnGetSkuTable);
+    auto *skuTable = m_osInterface->pfnGetSkuTable(m_osInterface);
+    if (skuTable && MEDIA_IS_SKU(skuTable, FtrEnablePPCFlush))
+    {
+        // Add PPC fulsh
+        params.bPPCFlush = true;
+    }
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpRenderCmdPacket::SetDnHVSParams(
+    PRENDER_DN_HVS_CAL_PARAMS params)
+{
+    VP_FUNC_CALL();
+    VP_RENDER_CHK_NULL_RETURN(params);
+
+    m_kernelConfigs.insert(std::make_pair(params->kernelId, (void *)params));
+
+    KERNEL_PARAMS kernelParams = {};
+    kernelParams.kernelId      = params->kernelId;
+    // kernelArgs will be initialized in VpRenderHVSKernel::Init with
+    // kernel.GetKernelArgs().
+    kernelParams.kernelThreadSpace.uWidth  = params->threadWidth;
+    kernelParams.kernelThreadSpace.uHeight = params->threadHeight;
+    kernelParams.kernelArgs                = params->kernelArgs;
+    kernelParams.syncFlag                  = true;
+    m_renderKernelParams.push_back(kernelParams);
 
     return MOS_STATUS_SUCCESS;
 }

@@ -568,6 +568,8 @@ MOS_STATUS CodecHalHevcMbencG12::SetupKernelArgsB()
     int idx = 0;
     SurfaceIndex *surfIndex = nullptr;
     CODECHAL_ENCODE_CHK_STATUS_RETURN(m_combinedBuffer1->GetIndex(surfIndex));
+
+    CODECHAL_ENCODE_CHK_NULL_RETURN(surfIndex);
     (*m_surfIndexArray)[idx++][m_mfeEncodeParams.streamId] = *surfIndex;
 
     //Setup second combined 1D surface
@@ -1069,8 +1071,7 @@ MOS_STATUS CodecHalHevcMbencG12::EncodeMbEncKernel(
     }
 
     CODECHAL_DEBUG_TOOL(
-        CODEC_REF_LIST currRefList;
-        currRefList        = *(m_refList[m_currReconstructedPic.FrameIdx]);
+        CODEC_REF_LIST currRefList = *(m_refList[m_currReconstructedPic.FrameIdx]);
         currRefList.RefPic = m_currOriginalPic;
 
         m_debugInterface->m_currPic            = m_currOriginalPic;

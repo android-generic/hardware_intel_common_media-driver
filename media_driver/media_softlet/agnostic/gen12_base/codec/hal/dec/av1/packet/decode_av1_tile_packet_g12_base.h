@@ -28,10 +28,10 @@
 #define __DECODE_AV1_TILE_PACKET_G12_BASE_H__
 
 #include "media_cmd_packet.h"
-#include "decode_av1_pipeline.h"
+#include "decode_av1_pipeline_g12_base.h"
 #include "decode_utils.h"
-#include "decode_av1_basic_feature.h"
-#include "decode_av1_tile_coding.h"
+#include "decode_av1_basic_feature_g12.h"
+#include "decode_av1_tile_coding_g12.h"
 
 namespace decode
 {
@@ -39,7 +39,7 @@ namespace decode
 class Av1DecodeTilePkt_G12_Base : public DecodeSubPacket
 {
 public:
-    Av1DecodeTilePkt_G12_Base(Av1Pipeline *pipeline, CodechalHwInterface *hwInterface)
+    Av1DecodeTilePkt_G12_Base(Av1PipelineG12_Base *pipeline, CodechalHwInterface *hwInterface)
         : DecodeSubPacket(pipeline, hwInterface), m_av1Pipeline(pipeline)
     {
         if (m_hwInterface != nullptr)
@@ -107,9 +107,9 @@ protected:
     //!
     virtual MOS_STATUS CalculateTileStateCommandSize();
 
-    Av1Pipeline *          m_av1Pipeline        = nullptr;
+    Av1PipelineG12_Base *  m_av1Pipeline        = nullptr;
     MhwVdboxAvpInterface * m_avpInterface       = nullptr;
-    Av1BasicFeature *      m_av1BasicFeature    = nullptr;
+    Av1BasicFeatureG12 *   m_av1BasicFeature    = nullptr;
     DecodeAllocator *      m_allocator          = nullptr;
 
     // Parameters passed from application
@@ -119,6 +119,7 @@ protected:
 
     uint32_t m_tileStatesSize      = 0;  //!< Tile state command size
     uint32_t m_tilePatchListSize   = 0;  //!< Tile patch list size
+MEDIA_CLASS_DEFINE_END(decode__Av1DecodeTilePkt_G12_Base)
 };
 
 }  // namespace decode

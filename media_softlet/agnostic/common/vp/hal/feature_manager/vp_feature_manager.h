@@ -89,6 +89,7 @@ protected:
         PVPHAL_SURFACE              pSrc,
         PVPHAL_SURFACE              pRenderTarget);
 
+    virtual bool IsCroppingNeeded(PVPHAL_SURFACE pSrc);
     //!
     //! \brief    Check if 2 passes CSC are needed
     //! \param    [in] pSrc
@@ -165,6 +166,8 @@ protected:
 protected:
     PVP_MHWINTERFACE        m_hwInterface       = nullptr;
     PMOS_INTERFACE          m_pOsInterface      = nullptr;
+
+MEDIA_CLASS_DEFINE_END(vp__VPFeatureManager)
 };
 
 class VpFeatureManagerNext : public MediaFeatureManager
@@ -200,6 +203,8 @@ protected:
     Policy              * m_policy = nullptr;
     std::map<FeatureType, SwFilterFeatureHandler*> m_featureHandler;
     uint32_t           m_isFeatureRegistered = false;
+
+MEDIA_CLASS_DEFINE_END(vp__VpFeatureManagerNext)
 };
 }
 #endif // !__VP_FEATURE_MANAGER_H__

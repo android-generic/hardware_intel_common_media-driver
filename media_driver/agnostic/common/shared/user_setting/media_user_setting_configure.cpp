@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021, Intel Corporation
+* Copyright (c) 2021-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -33,18 +33,36 @@ const UFKEY_NEXT Configure::m_rootKey = UFKEY_INTERNAL_NEXT;
 const char *Configure::m_configPath = USER_SETTING_CONFIG_PATH;
 const char *Configure::m_reportPath = USER_SETTING_REPORT_PATH;
 
+Configure::Configure(MOS_USER_FEATURE_KEY_PATH_INFO *keyPathInfo):Configure()
+{
+    m_keyPathInfo = keyPathInfo;
+
+    std::string subPath = "";
+
+    if (m_keyPathInfo != nullptr && m_keyPathInfo->Path != nullptr)
+    {
+        subPath = m_keyPathInfo->Path;
+    }
+
+    //when statePath set, will init m_statedConfigPath and m_statedReportPath with m_keyPathInfo
+    m_statedConfigPath = subPath + m_configPath;
+    m_statedReportPath = subPath + m_reportPath;
+}
+
 Configure::Configure()
 {
 #if (_DEBUG || _RELEASE_INTERNAL)
         m_isDebugMode = true;
 #endif
+    m_statedConfigPath = m_configPath;
+    m_statedReportPath = m_reportPath;
 
-    MosUtilities::MosInitializeReg();
+    MosUtilities::MosInitializeReg(m_regBufferMap);
 }
 
 Configure::~Configure()
 {
-    MosUtilities::MosUninitializeReg();
+    MosUtilities::MosUninitializeReg(m_regBufferMap);
 }
 
 MOS_STATUS Configure::Register(
@@ -53,7 +71,9 @@ MOS_STATUS Configure::Register(
     const Value &defaultValue,
     bool isReportKey,
     bool debugOnly,
-    const std::string &customPath)
+    bool useCustomPath,
+    const std::string &customPath,
+    bool statePath)
 {
     m_mutexLock.Lock();
 
@@ -64,6 +84,26 @@ MOS_STATUS Configure::Register(
     }
 
     auto &defs = GetDefinitions(group);
+    std::string subPath = "";
+    if (useCustomPath)
+    {
+        if (statePath && m_keyPathInfo != nullptr && m_keyPathInfo->Path != nullptr)
+        {
+            subPath = m_keyPathInfo->Path;
+        }
+        subPath += customPath;
+    }
+    else
+    {
+        if (statePath)
+        {
+            subPath = m_statedConfigPath;
+        }
+        else
+        {
+            subPath = m_configPath;
+        }
+    }
 
     defs.insert(
         std::make_pair(
@@ -73,7 +113,10 @@ MOS_STATUS Configure::Register(
                 defaultValue,
                 isReportKey,
                 debugOnly,
-                customPath)));
+                useCustomPath,
+                subPath,
+                m_rootKey,
+                statePath)));
 
     m_mutexLock.Unlock();
 
@@ -83,9 +126,9 @@ MOS_STATUS Configure::Register(
 MOS_STATUS Configure::Read(Value &value,
     const std::string &valueName,
     const Group &group,
-    PMOS_CONTEXT mosContext,
     const Value &customValue,
-    bool useCustomValue)
+    bool useCustomValue,
+    uint32_t option)
 {
     int32_t ret = 0;
 
@@ -103,36 +146,33 @@ MOS_STATUS Configure::Read(Value &value,
         return MOS_STATUS_SUCCESS;
     }
 
-    std::string basePath = "";
-    MOS_USER_FEATURE_KEY_PATH_INFO *ufInfo = Mos_GetDeviceUfPathInfo(mosContext);
-    if (ufInfo != nullptr && ufInfo->Path != nullptr)
-    {
-        basePath = ufInfo->Path;
-    }
+    std::string path = GetReadPath(def, option);
 
-    std::string configPath = def->CustomPath();
-    if (configPath.empty())
-    {
-        configPath = m_configPath;
-    }
-    else
-    {
-        configPath = "\\" + configPath;
-    }
+    UFKEY_NEXT  key      = {};
+    std::string strValue = "";
+    uint32_t    size     = MOS_USER_CONTROL_MAX_DATA_SIZE;
+    uint32_t    type     = 0;
 
-    std::string path = basePath + configPath;
-
-    UFKEY_NEXT key = {};
-    MOS_STATUS status = MosUtilities::MosOpenRegKey(m_rootKey, path, KEY_READ, &key);
-
+    // read env variable first, if env value is set, return
+    // else read the reg keys
+    MOS_STATUS status = MosUtilities::MosReadEnvVariable(key, valueName, &type, strValue, &size);
+ 
     if (status == MOS_STATUS_SUCCESS)
     {
-        std::string strValue = "";
-        uint32_t size = MOS_USER_CONTROL_MAX_DATA_SIZE;
-        uint32_t type = 0;
+        value = strValue;
+        return MOS_STATUS_SUCCESS;
+    }
+
+    status = MosUtilities::MosOpenRegKey(m_rootKey, path, KEY_READ, &key, m_regBufferMap);
+    
+    if (status == MOS_STATUS_SUCCESS)
+    {
+        strValue = "";
+        size     = MOS_USER_CONTROL_MAX_DATA_SIZE;
+        type     = 0;
 
         m_mutexLock.Lock();
-        status = MosUtilities::MosGetRegValue(key, valueName, &type, strValue, &size);
+        status = MosUtilities::MosGetRegValue(key, valueName, &type, strValue, &size, m_regBufferMap);
         if (status == MOS_STATUS_SUCCESS)
         {
             value = strValue;
@@ -142,20 +182,20 @@ MOS_STATUS Configure::Read(Value &value,
         MosUtilities::MosCloseRegKey(key);
     }
 
-    if (status != MOS_STATUS_SUCCESS)
+    if (status != MOS_STATUS_SUCCESS && option == MEDIA_USER_SETTING_INTERNAL)
     {
         value = useCustomValue ? customValue : def->DefaultValue();
     }
 
-    return MOS_STATUS_SUCCESS;
+    return status;
 }
 
 MOS_STATUS Configure::Write(
     const std::string &valueName,
     const Value &value,
     const Group &group,
-    PMOS_CONTEXT mosContext,
-    bool isForReport)
+    bool isForReport,
+    uint32_t option)
 {
     auto &defs = GetDefinitions(group);
 
@@ -175,26 +215,19 @@ MOS_STATUS Configure::Write(
         return MOS_STATUS_INVALID_PARAMETER;
     }
 
-    std::string basePath = "";
-    MOS_USER_FEATURE_KEY_PATH_INFO *ufInfo = Mos_GetDeviceUfPathInfo(mosContext);
-    if (ufInfo != nullptr && ufInfo->Path != nullptr)
-    {
-        basePath = ufInfo->Path;
-    }
-
-    std::string path = basePath + (isForReport ? m_reportPath : m_configPath);
+    std::string path = GetReportPath(def, option);
 
     UFKEY_NEXT key = {};
     MOS_STATUS status = MOS_STATUS_UNKNOWN;
 
     m_mutexLock.Lock();
-    status = MosUtilities::MosCreateRegKey(m_rootKey, path, KEY_WRITE, &key);
+    status = MosUtilities::MosCreateRegKey(m_rootKey, path, KEY_WRITE, &key, m_regBufferMap);
 
     if (status == MOS_STATUS_SUCCESS)
     {
         uint32_t size = def->DefaultValue().Size();
 
-        status = MosUtilities::MosSetRegValue(key, valueName, UF_SZ, value.ConstString());
+        status = MosUtilities::MosSetRegValue(key, valueName, UF_SZ, value.ConstString(), m_regBufferMap);
 
         MosUtilities::MosCloseRegKey(key);
     }
@@ -203,10 +236,76 @@ MOS_STATUS Configure::Write(
     if (status != MOS_STATUS_SUCCESS)
     {
         // When any fail happen, just print out a critical message, but not return error to break normal call sequence.
-        MOS_CRITICALMESSAGE(MOS_COMPONENT_OS, MOS_SUBCOMP_SELF, "Failed to write media user setting value.");
+        if(MosUtilities::m_mosUltFlag)
+        {
+            MOS_OS_NORMALMESSAGE("Failed to write media user setting %s value.", valueName.c_str());
+        }
+        else
+        {
+            MOS_OS_ASSERTMESSAGE("Failed to write media user setting %s value.", valueName.c_str());
+        }
     }
 
     return MOS_STATUS_SUCCESS;
+}
+
+std::string Configure::GetReadPath(
+    std::shared_ptr<Definition> def,
+    uint32_t option)
+{
+    std::string path = "";
+    if (def == nullptr)
+    {
+        return path;
+    }
+
+    if (option == MEDIA_USER_SETTING_INTERNAL)
+    {
+        return def->GetSubPath();
+    }
+    else
+    {
+        return GetExternalPath(option);
+    }
+}
+
+std::string Configure::GetReportPath(
+    std::shared_ptr<Definition> def,
+    uint32_t option)
+{
+    std::string path = "";
+    if (def == nullptr)
+    {
+        return path;
+    }
+    if (option == MEDIA_USER_SETTING_INTERNAL)
+    {
+        return m_statedReportPath;
+    }
+    else
+    {
+        return GetExternalPath(option);
+    }
+}
+
+std::string Configure::GetExternalPath(uint32_t option)
+{
+    std::string path = "";
+    auto it = m_pathOption.find(option);
+    if (it != m_pathOption.end())
+    {
+        if (it->second.bStated && m_keyPathInfo != nullptr && m_keyPathInfo->Path != nullptr)
+        {
+            path = m_keyPathInfo->Path;
+        }
+        path += it->second.subPath;
+        return path;
+    }
+    else
+    {
+        MOS_OS_ASSERTMESSAGE("Invalid Option");
+        return "";
+    }
 }
 
 }}

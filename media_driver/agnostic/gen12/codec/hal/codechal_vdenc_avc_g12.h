@@ -34,6 +34,8 @@
 class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
 {
    public:
+    uint8_t m_qpModulationStrength = 0;       //!< Current QP modulation strength
+    bool m_isFirstDeltaQP = true;              //!< check if it is first time
 
     PCODECHAL_ENCODE_SINGLEPIPE_VIRTUALENGINE_STATE m_sinlgePipeVeState;  //!< single pipe virtual engine state
     //!
@@ -56,7 +58,11 @@ class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
         numRefIdxL1Minus1 = m_avcSliceParams->num_ref_idx_l1_active_minus1;
     }
 
+    virtual void InitializeDataMember() override;
+
     MOS_STATUS InitializeState() override;
+
+    virtual MOS_STATUS AllocateResources() override;
 
     MOS_STATUS SetSequenceStructs() override;
 
@@ -77,6 +83,8 @@ class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
 
     MOS_STATUS SetDmemHuCBrcInitReset() override;
 
+    virtual MOS_STATUS DeltaQPUpdate(uint8_t QpModulationStrength);
+
     MOS_STATUS SetDmemHuCBrcUpdate() override;
 
     MOS_STATUS LoadMvCost(uint8_t qp) override;
@@ -94,6 +102,10 @@ class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
     MOS_STATUS InitKernelStateSFD() override;
 
     MOS_STATUS Initialize(CodechalSetting * settings) override;
+
+    virtual bool ProcessRoiDeltaQp() override;
+
+    virtual bool IsMBBRCControlEnabled() override;
 
     MOS_STATUS AddVdencWalkerStateCmd(
         PMOS_COMMAND_BUFFER cmdBuffer) override;
@@ -154,22 +166,6 @@ class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
     //!
     MOS_STATUS  SetAndPopulateVEHintParams(
         PMOS_COMMAND_BUFFER  cmdBuffer);
-    //!
-    //! \brief    Prepare HW MetaData buffer
-    //! \details  Prepare HW MetaData buffer (with G12 specific)
-    //! \param    [in] presMetadataBuffer
-    //!               Pointer to allocated HW MetaData buffer
-    //!           [in] presSliceSizeStreamoutBuffer
-    //!               Pointer to m_pakSliceSizeStreamoutBuffer
-    //!           [in] cmdBuffer
-    //!               Pointer to primary cmd buffer
-    //! \return   MOS_STATUS
-    //!           MOS_STATUS_SUCCESS if success, else fail reason
-    //!
-    virtual MOS_STATUS PrepareHWMetaData(
-        PMOS_RESOURCE       presMetadataBuffer,
-        PMOS_RESOURCE       presSliceSizeStreamoutBuffer,
-        PMOS_COMMAND_BUFFER cmdBuffer) override;
 
     //!
     //! \brief    Set VDENC StreamIn QP Surface state
@@ -191,8 +187,14 @@ class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
     //!
     virtual MOS_STATUS UserFeatureKeyReport() override;
 
+    virtual void SetBufferToStorePakStatistics() override;
+
+    virtual MOS_STATUS AddMiStoreForHWOutputToHucDmem(PMOS_COMMAND_BUFFER cmdBuffer) override;
+
    protected:
     class SfdCurbe;
+    struct BrcInitDmem;
+    struct BrcUpdateDmem;
     bool                  m_vdencUltraModeEnable = false;   //!< Enable VDEnc ultra mode
     bool                  m_forcedTCBRC = false;            //!< TCBRC forced instead of LowDelayBRC
 
@@ -208,6 +210,10 @@ class CodechalVdencAvcStateG12 : public CodechalVdencAvcState
     static const uint32_t m_singlePassMinFrameWidth   = 3840;
     static const uint32_t m_singlePassMinFrameHeight  = 2160;
     static const uint32_t m_singlePassMinFramePer100s = 6000;
+    uint8_t* m_pMBQPShadowBuffer = nullptr;
+    uint32_t m_uiMBQPShadowBufferSize = 0;
+
+    MOS_RESOURCE m_resPakOutputViaMmioBuffer = {}; //!< Buffer for PAK statistics output via MMIO
 
 protected:
 
@@ -216,6 +222,8 @@ protected:
         MHW_VDBOX_PIPE_MODE_SELECT_PARAMS& param) override;
 
     virtual void CopyMBQPDataToStreamIn(CODECHAL_VDENC_STREAMIN_STATE* pData, uint8_t* pInputData);
+
+    virtual uint16_t GetAdaptiveRoundingNumSlices() { return 0; }
 
 #if USE_CODECHAL_DEBUG_TOOL
 protected:
@@ -235,7 +243,6 @@ protected:
 
     virtual MOS_STATUS ModifyEncodedFrameSizeWithFakeHeaderSize( PMOS_COMMAND_BUFFER cmdBuffer) override;
 
-private:
     MOS_STATUS DumpParsedBRCInitDmem(
         struct BrcInitDmem* dmem);
 

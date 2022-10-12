@@ -134,3 +134,12 @@ MOS_STATUS DecodeHistogramDeviceG9Cfl::Initialize(
     return MOS_STATUS_SUCCESS;
 }
 
+#define IP_VERSION_M9_0 0x0900
+static bool cflRegisteredHwInfo =
+    MediaInterfacesFactory<MediaInterfacesHwInfoDevice>::RegisterHal<MediaInterfacesHwInfoDeviceG9Cfl>((uint32_t)IGFX_COFFEELAKE);
+
+MOS_STATUS MediaInterfacesHwInfoDeviceG9Cfl::Initialize(PLATFORM platform)
+{
+    m_hwInfo.SetDeviceInfo(IP_VERSION_M9_0, platform.usRevId);
+    return MOS_STATUS_SUCCESS;
+}

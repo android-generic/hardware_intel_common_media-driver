@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2018, Intel Corporation
+* Copyright (c) 2017-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -38,7 +38,6 @@ template <class THucCmds, class TMiCmds>
 class MhwVdboxHucInterfaceGeneric : public MhwVdboxHucInterface
 {
 protected:
-    #define PATCH_LIST_COMMAND(x)  (x##_NUMBER_OF_ADDRESSES)
     //!
     //! \enum     CommandsNumberOfAddresses
     //! \brief    Commands number of addresses
@@ -93,7 +92,7 @@ protected:
         uint32_t standard = CodecHal_GetStandardFromMode(mode);
         uint32_t numSlices = 1;
         uint32_t numStoreDataImm = 1;
-        uint32_t numStoreReg = 1;
+        uint32_t numStoreReg = 3;
 
         MHW_MI_CHK_NULL(commandsSize);
         MHW_MI_CHK_NULL(patchListSize);
@@ -148,7 +147,7 @@ protected:
         else if (mode == CODECHAL_ENCODE_MODE_AVC)
         {
             numStoreDataImm = 2;
-            numStoreReg     = 2;
+            numStoreReg     = 4;
 
             maxSize +=
                 2 * TMiCmds::MI_CONDITIONAL_BATCH_BUFFER_END_CMD::byteSize;

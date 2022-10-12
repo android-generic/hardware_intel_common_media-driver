@@ -35,7 +35,8 @@ enum _PacketType
 {
     VP_PIPELINE_PACKET_UNINITIALIZED  = 0,
     VP_PIPELINE_PACKET_VEBOX,
-    VP_PIPELINE_PACKET_RENDER
+    VP_PIPELINE_PACKET_RENDER,
+    VP_PIPELINE_PACKET_COMPUTE
 };
 using PacketType           = _PacketType;
 
@@ -93,6 +94,11 @@ public:
         return m_surfSetting;
     }
 
+    virtual bool ExtraProcessing()
+    {
+        return false;
+    }
+
 protected:
     virtual MOS_STATUS VpCmdPacketInit();
     bool IsOutputPipeVebox()
@@ -100,12 +106,15 @@ protected:
         return m_PacketCaps.bVebox && !m_PacketCaps.bSFC && !m_PacketCaps.bRender;
     }
 
+    virtual MOS_STATUS SetMediaFrameTracking(RENDERHAL_GENERIC_PROLOG_PARAMS &genericPrologParams);
+
 public:
     // HW intface to access MHW
     PVP_MHWINTERFACE    m_hwInterface = nullptr;
     VP_EXECUTE_CAPS     m_PacketCaps = {};
     PVpAllocator        &m_allocator;
     VPMediaMemComp      *m_mmc = nullptr;
+    std::shared_ptr<mhw::vebox::Itf> m_vebox_Itf = nullptr;
 
 protected:
     PacketType                  m_PacketId = VP_PIPELINE_PACKET_UNINITIALIZED;
@@ -115,6 +124,8 @@ protected:
 
 private:
     MediaScalability *          m_scalability = nullptr;
+
+MEDIA_CLASS_DEFINE_END(vp__VpCmdPacket)
 };
 }
 #endif // !__VP_CMD_PACKET_H__

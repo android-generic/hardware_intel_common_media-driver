@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2021, Intel Corporation
+* Copyright (c) 2019-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -25,11 +25,12 @@
 //!
 
 #include "mos_os.h"
-#include "mos_util_debug_next.h"
+#include "mos_util_debug.h"
 #include "mos_resource_defs.h"
 #include <unistd.h>
 #include <dlfcn.h>
 #include "hwinfo_linux.h"
+#include "mos_interface.h"
 #include <stdlib.h>
 
 #include <sys/ipc.h>
@@ -73,6 +74,11 @@ MOS_STATUS OsContextSpecificNext::Init(DDI_DEVICE_CONTEXT ddiDriverContext)
 
     if (GetOsContextValid() == false)
     {
+        m_skuTable.reset();
+        m_waTable.reset();
+        MosUtilities::MosZeroMemory(&m_platformInfo, sizeof(m_platformInfo));
+        MosUtilities::MosZeroMemory(&m_gtSystemInfo, sizeof(m_gtSystemInfo));
+
         if( nullptr == osDriverContext  ||
             0 >= osDriverContext->fd )
         {
@@ -88,28 +94,12 @@ MOS_STATUS OsContextSpecificNext::Init(DDI_DEVICE_CONTEXT ddiDriverContext)
             return MOS_STATUS_INVALID_PARAMETER;
         }
         mos_bufmgr_gem_enable_reuse(m_bufmgr);
-        
-        MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-        MOS_UserFeature_ReadValue_ID(
-            nullptr,
-            __MEDIA_USER_FEATURE_VALUE_ENABLE_SOFTPIN_ID,
-            &UserFeatureData,
-            nullptr);
-        if (UserFeatureData.i32Data)
-        {
-            mos_bufmgr_gem_enable_softpin(m_bufmgr);
-        }
 
         osDriverContext->bufmgr                 = m_bufmgr;
 
         //Latency reducation:replace HWGetDeviceID to get device using ioctl from drm.
         iDeviceId   = mos_bufmgr_gem_get_devid(m_bufmgr);
         m_isAtomSOC = IS_ATOMSOC(iDeviceId);
-
-        m_skuTable.reset();
-        m_waTable.reset();
-        MosUtilities::MosZeroMemory(&m_platformInfo, sizeof(m_platformInfo));
-        MosUtilities::MosZeroMemory(&m_gtSystemInfo, sizeof(m_gtSystemInfo));
 
         eStatus = NullHW::Init(osDriverContext);
         if (!NullHW::IsEnabled())
@@ -131,6 +121,23 @@ MOS_STATUS OsContextSpecificNext::Init(DDI_DEVICE_CONTEXT ddiDriverContext)
             return eStatus;
         }
 
+        MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
+        MOS_UserFeature_ReadValue_ID(
+            nullptr,
+            __MEDIA_USER_FEATURE_VALUE_ENABLE_SOFTPIN_ID,
+            &UserFeatureData,
+            osDriverContext);
+        if (UserFeatureData.i32Data)
+        {
+            bool softpin_va1Malign = false;
+            if (MEDIA_IS_SKU(&m_skuTable, Ftr1MGranularAuxTable))
+            {
+                softpin_va1Malign = true;
+            }
+
+            mos_bufmgr_gem_enable_softpin(m_bufmgr, softpin_va1Malign);
+        }
+
         if (MEDIA_IS_SKU(&m_skuTable, FtrEnableMediaKernels) == 0)
         {
             MEDIA_WR_WA(&m_waTable, WaHucStreamoutOnlyDisable, 0);
@@ -144,9 +151,10 @@ MOS_STATUS OsContextSpecificNext::Init(DDI_DEVICE_CONTEXT ddiDriverContext)
             m_platformInfo.eRenderCoreFamily,
             (m_platformInfo.usRevId << 16) | m_platformInfo.usDeviceID);
 
-        GMM_SKU_FEATURE_TABLE   gmmSkuTable = {};
-        GMM_WA_TABLE            gmmWaTable  = {};
-        GMM_GT_SYSTEM_INFO      gmmGtInfo   = {};
+        GMM_SKU_FEATURE_TABLE   gmmSkuTable   = {};
+        GMM_WA_TABLE            gmmWaTable    = {};
+        GMM_GT_SYSTEM_INFO      gmmGtInfo     = {};
+        GMM_ADAPTER_BDF         gmmAdapterBDF = {};
         eStatus = HWInfo_GetGmmInfo(m_fd, &gmmSkuTable, &gmmWaTable, &gmmGtInfo);
         if (MOS_STATUS_SUCCESS != eStatus)
         {
@@ -154,28 +162,32 @@ MOS_STATUS OsContextSpecificNext::Init(DDI_DEVICE_CONTEXT ddiDriverContext)
             return eStatus;
         }
 
-        GmmExportEntries gmmFuncs  = {};
-        GMM_STATUS       gmmStatus = OpenGmm(&gmmFuncs);
-        if (gmmStatus != GMM_SUCCESS)
+        eStatus = MosInterface::GetAdapterBDF(osDriverContext, &gmmAdapterBDF);
+        if (MOS_STATUS_SUCCESS != eStatus)
         {
-            MOS_OS_ASSERTMESSAGE("Fatal error - gmm init failed.");
-            return MOS_STATUS_INVALID_PARAMETER;
+            MOS_OS_ASSERTMESSAGE("Fatal error - unsuccesfull Gmm Adapter BDF initialization");
+            return eStatus;
         }
 
-        // init GMM context
-        gmmStatus = gmmFuncs.pfnCreateSingletonContext(m_platformInfo,
-            &gmmSkuTable,
-            &gmmWaTable,
-            &gmmGtInfo);
+        // Initialize Gmm context
+        GMM_INIT_IN_ARGS  gmmInitAgrs = {};
+        GMM_INIT_OUT_ARGS gmmOutArgs  = {};
+        gmmInitAgrs.Platform          = m_platformInfo;
+        gmmInitAgrs.pSkuTable         = &gmmSkuTable;
+        gmmInitAgrs.pWaTable          = &gmmWaTable;
+        gmmInitAgrs.pGtSysInfo        = &gmmGtInfo;
+        gmmInitAgrs.FileDescriptor    = gmmAdapterBDF.Data;
+        gmmInitAgrs.ClientType        = (GMM_CLIENT)GMM_LIBVA_LINUX;
 
-        if (gmmStatus != GMM_SUCCESS)
+        GMM_STATUS status = InitializeGmm(&gmmInitAgrs, &gmmOutArgs);
+        if (status != GMM_SUCCESS)
         {
-            MOS_OS_ASSERTMESSAGE("Fatal error - gmm CreateSingletonContext failed.");
+            MOS_OS_ASSERTMESSAGE("Fatal error - InitializeGmm fail.");
             return MOS_STATUS_INVALID_PARAMETER;
         }
-        m_gmmClientContext = gmmFuncs.pfnCreateClientContext((GMM_CLIENT)GMM_LIBVA_LINUX);
+        m_gmmClientContext = gmmOutArgs.pGmmClientContext;
 
-        m_auxTableMgr = AuxTableMgr::CreateAuxTableMgr(m_bufmgr, &m_skuTable);
+        m_auxTableMgr = AuxTableMgr::CreateAuxTableMgr(m_bufmgr, &m_skuTable, m_gmmClientContext);
 
         MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
 #if (_DEBUG || _RELEASE_INTERNAL)
@@ -221,6 +233,10 @@ MOS_STATUS OsContextSpecificNext::Init(DDI_DEVICE_CONTEXT ddiDriverContext)
         m_gpuContextMgr = GpuContextMgrNext::GetObject(this);
         MOS_OS_CHK_NULL_RETURN(m_gpuContextMgr);
 
+        m_perfData = (PERF_DATA*)MOS_AllocAndZeroMemory(sizeof(PERF_DATA));
+        MOS_OS_CHK_NULL_RETURN(m_perfData);
+        osDriverContext->pPerfData = m_perfData;
+
         //It must be done with m_gpuContextMgr ready. Insides it will create gpu context.
 #ifdef _MMC_SUPPORTED
         m_mosDecompression = MOS_New(MosDecompression, osDriverContext);
@@ -233,12 +249,17 @@ MOS_STATUS OsContextSpecificNext::Init(DDI_DEVICE_CONTEXT ddiDriverContext)
         }
 #endif
         m_mosMediaCopy = MOS_New(MosMediaCopy, osDriverContext);
-        MOS_OS_CHK_NULL_RETURN(m_mosMediaCopy);
-        osDriverContext->ppMediaCopyState = m_mosMediaCopy->GetMediaCopyState();
-        MOS_OS_CHK_NULL_RETURN(osDriverContext->ppMediaCopyState);
-        if (*osDriverContext->ppMediaCopyState == nullptr)
+        if (nullptr == m_mosMediaCopy)
         {
-            MOS_OS_ASSERTMESSAGE("Media Copy state creation failed");
+            MOS_OS_NORMALMESSAGE("m_mosMediaCopy creation failed");
+        }
+        else
+        {
+            osDriverContext->ppMediaCopyState = (void **)m_mosMediaCopy->GetMediaCopyState();
+            if ((nullptr == osDriverContext->ppMediaCopyState) || (nullptr == *osDriverContext->ppMediaCopyState))
+            {
+                MOS_OS_NORMALMESSAGE("Media Copy state creation failed");
+            }
         }
     }
     return eStatus;
@@ -261,20 +282,25 @@ void OsContextSpecificNext::Destroy()
 
         mos_bufmgr_destroy(m_bufmgr);
 
-        GmmExportEntries GmmFuncs;
-        GMM_STATUS       gmmStatus = OpenGmm(&GmmFuncs);
-        if (gmmStatus == GMM_SUCCESS)
-        {
-            GmmFuncs.pfnDeleteClientContext((GMM_CLIENT_CONTEXT *)m_gmmClientContext);
-            m_gmmClientContext = nullptr;
-            GmmFuncs.pfnDestroySingletonContext();
-        }
-        else
-        {
-            MOS_OS_ASSERTMESSAGE("gmm init failed.");
-        }
+        // Delete Gmm context
+        GMM_INIT_OUT_ARGS gmmOutArgs = {};
+        gmmOutArgs.pGmmClientContext = m_gmmClientContext;
+        GmmAdapterDestroy(&gmmOutArgs);
+        m_gmmClientContext = nullptr;
 
         SetOsContextValid(false);
+
+        if (m_perfData != nullptr)
+        {
+           MOS_FreeMemory(m_perfData);
+           m_perfData = nullptr;
+        }
+
+        if (m_mosMediaCopy != nullptr)
+        {
+           MOS_Delete(m_mosMediaCopy);
+        }
     }
+
 }
 

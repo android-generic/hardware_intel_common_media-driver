@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2019, Intel Corporation
+* Copyright (c) 2017-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -1956,6 +1956,7 @@ MOS_STATUS CodechalEncHevcStateG12::GetStatusReport(
         CODECHAL_ENCODE_CHK_STATUS_RETURN(CalculatePSNR(encodeStatus, encodeStatusReport));
     }
 
+    CODECHAL_ENCODE_CHK_COND_RETURN(totalCU == 0, "Invalid totalCU count");
     encodeStatusReport->QpY = encodeStatusReport->AverageQp =
         (uint8_t)((sumQp / (double)totalCU) / 4.0);  // due to TU is 4x4 and there are 4 TUs in one CU
 
@@ -5838,6 +5839,8 @@ MOS_STATUS CodechalEncHevcStateG12::GenerateSkipFrameMbCodeSurface(SkipFrameInfo
     auto const maxNumCuInCtb    = (ctbSize / CODECHAL_HEVC_MIN_CU_SIZE) * (ctbSize / CODECHAL_HEVC_MIN_CU_SIZE);
     auto const picWidthInCtb    = MOS_ROUNDUP_DIVIDE(m_frameWidth, ctbSize);
     auto const picHeightInCtb   = MOS_ROUNDUP_DIVIDE(m_frameHeight, ctbSize);
+    CODECHAL_ENCODE_CHK_COND_RETURN(picWidthInCtb <= 0, "Invalid m_frameWidth");
+    CODECHAL_ENCODE_CHK_COND_RETURN(picHeightInCtb <= 0, "Invalid m_frameHeight");
     uint32_t   num_tile_columns = m_hevcPicParams->num_tile_columns_minus1 + 1;
     uint32_t * tileColumnsStartPosition{new uint32_t[num_tile_columns]{}};
 
@@ -7935,7 +7938,7 @@ uint32_t CodechalEncHevcStateG12::CodecHalHevc_GetFileSize(char *fileName)
 {
     FILE *   fp       = nullptr;
     uint32_t fileSize = 0;
-    MOS_SecureFileOpen(&fp, fileName, "rb");
+    MosUtilities::MosSecureFileOpen(&fp, fileName, "rb");
     if (fp == nullptr)
     {
         return 0;
@@ -8001,7 +8004,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadSourceAndRef2xDSFromFile(
         CODECHAL_ENCODE_CHK_NULL_RETURN(data);
 
         FILE *Ref2xDS = nullptr;
-        eStatus       = MOS_SecureFileOpen(&Ref2xDS, pathOfRef2xDSCmd, "rb");
+        eStatus       = MosUtilities::MosSecureFileOpen(&Ref2xDS, pathOfRef2xDSCmd, "rb");
         if (Ref2xDS == nullptr)
         {
             m_osInterface->pfnUnlockResource(m_osInterface, &pRef2xSurface->OsResource);
@@ -8035,7 +8038,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadSourceAndRef2xDSFromFile(
         CODECHAL_ENCODE_CHK_NULL_RETURN(data);
 
         FILE *Src2xDS = nullptr;
-        eStatus       = MOS_SecureFileOpen(&Src2xDS, pathOfSrc2xDSCmd, "rb");
+        eStatus       = MosUtilities::MosSecureFileOpen(&Src2xDS, pathOfSrc2xDSCmd, "rb");
         if (Src2xDS == nullptr)
         {
             m_osInterface->pfnUnlockResource(m_osInterface, &pSrc2xSurface->OsResource);
@@ -8100,7 +8103,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadPakCommandAndCuRecordFromFile()
     CODECHAL_ENCODE_CHK_NULL_RETURN(data);
 
     FILE *pakObj = nullptr;
-    eStatus      = MOS_SecureFileOpen(&pakObj, pathOfPakCmd, "rb");
+    eStatus      = MosUtilities::MosSecureFileOpen(&pakObj, pathOfPakCmd, "rb");
     if (pakObj == nullptr)
     {
         m_osInterface->pfnUnlockResource(m_osInterface, &m_resMbCodeSurface);
@@ -8118,7 +8121,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadPakCommandAndCuRecordFromFile()
 
     uint8_t *record  = data + m_mvOffset;
     FILE *   fRecord = nullptr;
-    eStatus          = MOS_SecureFileOpen(&fRecord, pathOfCuRecord, "rb");
+    eStatus          = MosUtilities::MosSecureFileOpen(&fRecord, pathOfCuRecord, "rb");
     if (fRecord == nullptr)
     {
         m_osInterface->pfnUnlockResource(m_osInterface, &m_resMbCodeSurface);
@@ -8157,7 +8160,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadPakCommandAndCuRecordFromFile()
         CODECHAL_ENCODE_CHK_NULL_RETURN(data);
 
         FILE *fPicState = nullptr;
-        eStatus         = MOS_SecureFileOpen(&fPicState, pathOfPicState, "rb");
+        eStatus         = MosUtilities::MosSecureFileOpen(&fPicState, pathOfPicState, "rb");
         if (fPicState == nullptr)
         {
             m_osInterface->pfnUnlockResource(m_osInterface, &m_brcBuffers.resBrcImageStatesWriteBuffer[m_currRecycledBufIdx]);
@@ -9595,7 +9598,7 @@ MOS_STATUS CodechalEncHevcStateG12::InitMmcState()
 //        WRITE_CURBE_FIELD_TO_FILE(MaxThreadWidth);
 //        WRITE_CURBE_FIELD_TO_FILE(MaxThreadHeight);
 //
-//        CODECHAL_DEBUG_CHK_STATUS(MOS_WriteFileFromPtr(
+//        CODECHAL_DEBUG_CHK_STATUS(MosUtilities::MosWriteFileFromPtr(
 //            pDebugInterface->sPath,
 //            FileParams.psWriteToFile,
 //            FileParams.dwOffset));

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2018, Intel Corporation
+* Copyright (c) 2017-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -272,6 +272,10 @@ MOS_STATUS OsContextSpecific::CreateIPC()
     m_semId = MOS_LINUX_IPC_INVALID_ID;
     m_shmId = MOS_LINUX_IPC_INVALID_ID;
     m_shm   = MOS_LINUX_SHM_INVALID;
+    if (m_apoMosEnabled)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
 
     struct semid_ds buf;
     MOS_ZeroMemory(&buf, sizeof(buf));
@@ -294,7 +298,7 @@ MOS_STATUS OsContextSpecific::CreateIPC()
             break;
         }
 
-        MOS_Sleep(1); //wait and retry
+        MosUtilities::MosSleep(1);  //wait and retry
     }
 
     LockSemaphore(m_semId);
@@ -308,6 +312,11 @@ finish:
 
 void OsContextSpecific::DestroyIPC()
 {
+    if (m_apoMosEnabled)
+    {
+        return;
+    }
+
     if (MOS_LINUX_IPC_INVALID_ID != m_semId)
     {
         int16_t iAttachedNum = 0;
@@ -337,12 +346,19 @@ MOS_STATUS OsContextSpecific::CreateSSEUIPC()
     m_sseuSemId = MOS_LINUX_IPC_INVALID_ID;
     m_sseuShmId = MOS_LINUX_IPC_INVALID_ID;
     m_sseuShm   = MOS_LINUX_SHM_INVALID;
-
+    if (m_apoMosEnabled)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
     return eStatus;
 }
 
 void OsContextSpecific::DestroySSEUIPC()
 {
+    if (m_apoMosEnabled)
+    {
+        return;
+    }
     if (MOS_LINUX_IPC_INVALID_ID != m_sseuSemId)
     {
         short iAttachedNum = 0;
@@ -523,7 +539,7 @@ MOS_STATUS OsContextSpecific::Init(PMOS_CONTEXT pOsDriverContext)
                 return eStatus;
             }
         }
-    
+
         eStatus = CreateSSEUIPC();
         if (eStatus != MOS_STATUS_SUCCESS)
         {

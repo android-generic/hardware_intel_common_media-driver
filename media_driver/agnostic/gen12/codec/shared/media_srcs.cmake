@@ -1,4 +1,4 @@
-# Copyright (c) 2017-2021, Intel Corporation
+# Copyright (c) 2017-2022, Intel Corporation
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the "Software"),
@@ -23,13 +23,6 @@ set(TMP_SOURCES_ "")
 
 set(TMP_HEADERS_ "")
 
-if( ${AV1_Decode_Supported} STREQUAL "yes" )
-    set(TMP_HEADERS_
-        ${TMP_HEADERS_}
-        ${CMAKE_CURRENT_LIST_DIR}/codec_def_decode_av1.h
-    )
-endif()
-
 if ("${HEVC_Encode_VME_Supported}" STREQUAL "yes" OR "${HEVC_Encode_VDEnc_Supported}" STREQUAL "yes")
     set(TMP_HEADERS_
         ${TMP_HEADERS_}
@@ -48,12 +41,13 @@ set(HEADERS_
     ${TMP_HEADERS_}
 )
 
-set(COMMON_HEADERS_
-    ${COMMON_HEADERS_}
+set(CODEC_HEADERS_
+    ${CODEC_HEADERS_}
     ${TMP_HEADERS_}
 )
 
 source_group( "CodecHal\\Common" FILES ${TMP_HEADERS_} )
-
+set(TMP_SOURCES_ "")
+set(TMP_HEADERS_ "")
 
 media_add_curr_to_include_path()

@@ -34,12 +34,13 @@
 #include "media_scalability_option.h"
 #include "cm_rt_umd.h"
 #include "mos_interface.h"
+#include "mhw_mi_itf.h"
 
 class MediaStatusReport;
 class MediaContext;
 class MhwMiInterface;
 class CodechalHwInterface;
-class MediaScalability
+class MediaScalability : public mhw::mi::Itf::ParSetting
 {
     friend class MediaContext;
 
@@ -211,6 +212,24 @@ public:
     virtual MOS_STATUS ResetSemaphore(uint32_t syncType, uint32_t semaphoreId, PMOS_COMMAND_BUFFER cmdBuffer) = 0;
 
     //!
+    //! \brief  Oca 1st Level BB Start
+    //! \param  [in, out] cmdBuffer
+    //!         Reference to command buffer
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS Oca1stLevelBBStart(MOS_COMMAND_BUFFER &cmdBuffer) { return MOS_STATUS_SUCCESS; };
+
+    //!
+    //! \brief  Oca 1st Level BB End
+    //! \param  [in, out] cmdBuffer
+    //!         Reference to command buffer
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS Oca1stLevelBBEnd(MOS_COMMAND_BUFFER &cmdBuffer) { return MOS_STATUS_SUCCESS; };
+
+    //!
     //! \brief  Get pipe number
     //! \return Pipe number
     //!
@@ -335,7 +354,6 @@ protected:
 
     uint8_t                  m_componentType        = 0;
     PMOS_INTERFACE           m_osInterface          = nullptr;  //!< OS interface
-    MhwMiInterface *         m_miInterface          = nullptr;  //!< Mi interface used to add BB end
     MediaScalabilityOption * m_scalabilityOption    = nullptr;
     PMOS_GPUCTX_CREATOPTIONS m_gpuCtxCreateOption   = nullptr;  //!<For MultiPipe cases, it should be converted to PMOS_GPUCTX_CREATOPTIONS_ENHANCED;
     MediaStatusReport *      m_statusReport         = nullptr;  //!< Media status report ptr
@@ -347,5 +365,8 @@ protected:
     PMOS_VIRTUALENGINE_HINT_PARAMS m_veHitParams = nullptr;  //!< Virtual Engine hint parameters
 
     MOS_VE_HANDLE     m_veState = nullptr; //!< Virtual Engine State
+    std::shared_ptr<mhw::mi::Itf> m_miItf = nullptr;
+
+MEDIA_CLASS_DEFINE_END(MediaScalability)
 };
 #endif  // !__MEDIA_SCALABILITY_H__

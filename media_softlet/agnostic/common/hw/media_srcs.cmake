@@ -26,6 +26,27 @@ set(TMP_HEADERS_
     ${CMAKE_CURRENT_LIST_DIR}/mhw_itf.h
     ${CMAKE_CURRENT_LIST_DIR}/mhw_impl.h
     ${CMAKE_CURRENT_LIST_DIR}/mhw_hwcmd_process_cmdfields.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_render_cmdpar.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_render_impl.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_render_itf.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_mi_cmdpar.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_mi_impl.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_mi_itf.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_mmio_common.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_utilities_next.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_vebox_cmdpar.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_vebox_impl.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_vebox_itf.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_sfc_cmdpar.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_sfc_impl.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_sfc_itf.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_blt_cmdpar.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_blt_impl.h
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_blt_itf.h
+)
+
+set(TMP_SOURCES_
+    ${CMAKE_CURRENT_LIST_DIR}/mhw_utilities_next.cpp
 )
 
 set(SOURCES_

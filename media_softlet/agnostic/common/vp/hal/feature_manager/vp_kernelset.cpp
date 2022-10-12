@@ -1,4 +1,4 @@
-/* Copyright (c) 2020-2021, Intel Corporation
+/* Copyright (c) 2020-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -26,6 +26,9 @@
 //!           commands.
 //!
 #include "vp_kernelset.h"
+#include "vp_render_fc_kernel.h"
+#include "vp_render_vebox_hdr_3dlut_kernel.h"
+#include "vp_render_vebox_hvs_kernel.h"
 
 using namespace vp;
 
@@ -108,9 +111,20 @@ MOS_STATUS VpKernelSet::CreateSingleKernelObject(
 {
     VP_FUNC_CALL();
     kernel = nullptr;
-    switch (kernelId)
+    switch ((uint32_t)kernelId)
     {
     case kernelCombinedFc:
+        kernel = (VpRenderKernelObj*)MOS_New(VpRenderFcKernel, m_hwInterface, m_allocator);
+        VP_RENDER_CHK_NULL_RETURN(kernel);
+        break;
+    case kernelHdr3DLutCalc:
+        kernel = (VpRenderKernelObj *)MOS_New(VpRenderHdr3DLutKernel, m_hwInterface, kernelId, kernelIndex, m_allocator);
+        VP_RENDER_CHK_NULL_RETURN(kernel);
+        break;
+    case kernelHVSCalc:
+        kernel = (VpRenderKernelObj *)MOS_New(VpRenderHVSKernel, m_hwInterface, kernelId, kernelIndex, m_allocator);
+        VP_RENDER_CHK_NULL_RETURN(kernel);
+        break;
     default:
         VP_RENDER_ASSERTMESSAGE("No supported kernel, return");
         return MOS_STATUS_UNIMPLEMENTED;
@@ -124,7 +138,9 @@ MOS_STATUS VpKernelSet::CreateKernelObjects(
     VP_SURFACE_GROUP& surfacesGroup,
     KERNEL_SAMPLER_STATE_GROUP& samplerStateGroup,
     KERNEL_CONFIGS& kernelConfigs,
-    KERNEL_OBJECTS& kernelObjs)
+    KERNEL_OBJECTS& kernelObjs,
+    VP_RENDER_CACHE_CNTL& surfMemCacheCtl,
+    VP_PACKET_SHARED_CONTEXT *sharedContext)
 {
     VP_FUNC_CALL();
 
@@ -142,13 +158,26 @@ MOS_STATUS VpKernelSet::CreateKernelObjects(
         return status;
     };
 
+    kernelObjs.clear();
+
     for (uint32_t kernelIndex = 0; kernelIndex < kernelParams.size(); ++kernelIndex)
     {
-
-        VP_RENDER_CHK_STATUS_RETURN(CreateSingleKernelObject(
-            kernel,
-            kernelParams[kernelIndex].kernelId,
-            kernelIndex));
+        auto it = m_cachedKernels.find(kernelParams[kernelIndex].kernelId);
+        if (m_cachedKernels.end() == it)
+        {
+            VP_RENDER_CHK_STATUS_RETURN(CreateSingleKernelObject(
+                kernel,
+                kernelParams[kernelIndex].kernelId,
+                kernelIndex));
+            if (kernel->IsKernelCached())
+            {
+                m_cachedKernels.insert(std::make_pair(kernelParams[kernelIndex].kernelId, kernel));
+            }
+        }
+        else
+        {
+            kernel = it->second;
+        }
 
         VP_RENDER_CHK_NULL_RETURN(kernel);
 
@@ -161,7 +190,7 @@ MOS_STATUS VpKernelSet::CreateKernelObjects(
 
             VP_RENDER_CHK_STATUS_RETURN(VpStatusHandler(GetKernelInfo(kernel->GetKernelBinaryID(), kernelSize, binary)));
 
-            VP_RENDER_CHK_STATUS_RETURN(VpStatusHandler(kernel->InitKernel(binary, kernelSize, kernelConfigs, surfacesGroup)));
+            VP_RENDER_CHK_STATUS_RETURN(VpStatusHandler(kernel->InitKernel(binary, kernelSize, kernelConfigs, surfacesGroup, surfMemCacheCtl)));
 
             kernelObjs.insert(std::make_pair(kernelIndex, kernel));
         }
@@ -169,7 +198,7 @@ MOS_STATUS VpKernelSet::CreateKernelObjects(
         {
             VP_RENDER_CHK_STATUS_RETURN(VpStatusHandler(FindAndInitKernelObj(kernel)));
 
-            VP_RENDER_CHK_STATUS_RETURN(VpStatusHandler(kernel->SetKernelConfigs(kernelParams[kernelIndex], surfacesGroup, samplerStateGroup)));
+            VP_RENDER_CHK_STATUS_RETURN(VpStatusHandler(kernel->SetKernelConfigs(kernelParams[kernelIndex], surfacesGroup, samplerStateGroup, kernelConfigs, sharedContext)));
 
             kernelObjs.insert(std::make_pair(kernelIndex, kernel));
         }

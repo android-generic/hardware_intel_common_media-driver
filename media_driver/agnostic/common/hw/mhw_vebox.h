@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2021, Intel Corporation
+* Copyright (c) 2014-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -199,7 +199,8 @@ typedef struct _MHW_VEBOX_3D_LUT
     uint32_t    ArbitrationPriorityControl                  : 2;
     uint32_t    Lut3dEnable                                 : 1;
     uint32_t    Lut3dSize                                   : 2;
-    uint32_t                                                : 27; // Reserved
+    uint32_t    ChannelMappingSwapForLut3D                  : 1;
+    uint32_t                                                : 26; // Reserved
 } MHW_VEBOX_3D_LUT, *PMHW_VEBOX_3D_LUT;
 
 //!
@@ -227,77 +228,79 @@ typedef struct _MHW_VEBOX_STATE_CMD_PARAMS
 typedef struct _MHW_VEBOX_DNDI_PARAMS
 {
     // DI and Luma Denoise Params
-    uint32_t  dwDenoiseASDThreshold;
-    uint32_t  dwDenoiseHistoryDelta;
-    uint32_t  dwDenoiseMaximumHistory;
-    uint32_t  dwDenoiseSTADThreshold;
-    uint32_t  dwDenoiseSCMThreshold;
-    uint32_t  dwDenoiseMPThreshold;
-    uint32_t  dwLTDThreshold;
-    uint32_t  dwTDThreshold;
-    uint32_t  dwGoodNeighborThreshold;
-    bool      bDNDITopFirst;
-    bool      bProgressiveDN;
-    uint32_t  dwFMDFirstFieldCurrFrame;
-    uint32_t  dwFMDSecondFieldPrevFrame;
+    uint32_t  dwDenoiseASDThreshold = 0;
+    uint32_t  dwDenoiseHistoryDelta = 0;
+    uint32_t  dwDenoiseMaximumHistory = 0;
+    uint32_t  dwDenoiseSTADThreshold  = 0;
+    uint32_t  dwDenoiseSCMThreshold   = 0;
+    uint32_t  dwDenoiseMPThreshold    = 0;
+    uint32_t  dwLTDThreshold          = 0;
+    uint32_t  dwTDThreshold           = 0;
+    uint32_t  dwGoodNeighborThreshold = 0;
+    bool      bDNDITopFirst           = false;
+    bool      bProgressiveDN          = false;
+    uint32_t  dwFMDFirstFieldCurrFrame  = 0;
+    uint32_t  dwFMDSecondFieldPrevFrame = 0;
 
     // Pixel Range Threshold Array for 5x5 Spatial Filter
-    uint32_t  dwPixRangeThreshold[MHW_PIXRANGETHRES_NUM];
-    uint32_t  dwPixRangeWeight[MHW_PIXRANGETHRES_NUM];
+    uint32_t dwPixRangeThreshold[MHW_PIXRANGETHRES_NUM] = {};
+    uint32_t dwPixRangeWeight[MHW_PIXRANGETHRES_NUM]    = {};
 
     // Chroma Denoise Params
-    uint32_t  dwHistoryInitUV;
-    uint32_t  dwChromaSTADThreshold;
-    uint32_t  dwChromaLTDThreshold;
-    uint32_t  dwChromaTDThreshold;
-    bool      bChromaDNEnable;
+    uint32_t  dwHistoryInitUV = 0;
+    uint32_t  dwChromaSTADThreshold = 0;
+    uint32_t  dwChromaLTDThreshold  = 0;
+    uint32_t  dwChromaTDThreshold   = 0;
+    bool      bChromaDNEnable       = false;
 
     // Hot Pixel Params
-    uint32_t  dwHotPixelThreshold;
-    uint32_t  dwHotPixelCount;
+    uint32_t dwHotPixelThreshold = 0;
+    uint32_t dwHotPixelCount     = 0;
 
     // CNL New DI
-    uint32_t  dwLumaTDMWeight;
-    uint32_t  dwChromaTDMWeight;
-    uint32_t  dwSHCMDelta;
-    uint32_t  dwSHCMThreshold;
-    uint32_t  dwSVCMDelta;
-    uint32_t  dwSVCMThreshold;
-    bool      bFasterConvergence;
-    bool      bTDMLumaSmallerWindow;
-    bool      bTDMChromaSmallerWindow;
-    uint32_t  dwLumaTDMCoringThreshold;
-    uint32_t  dwChromaTDMCoringThreshold;
-    bool      bBypassDeflickerFilter;
-    bool      bUseSyntheticContentMedian;
-    bool      bLocalCheck;
-    bool      bSyntheticContentCheck;
-    bool      bSyntheticFrame;
-    bool      bSCDEnable;
-    uint32_t  dwDirectionCheckThreshold;
-    uint32_t  dwTearingLowThreshold;
-    uint32_t  dwTearingHighThreshold;
-    uint32_t  dwDiffCheckSlackThreshold;
-    uint32_t  dwSADWT0;
-    uint32_t  dwSADWT1;
-    uint32_t  dwSADWT2;
-    uint32_t  dwSADWT3;
-    uint32_t  dwSADWT4;
-    uint32_t  dwSADWT6;
-    uint32_t  dwLPFWtLUT0;
-    uint32_t  dwLPFWtLUT1;
-    uint32_t  dwLPFWtLUT2;
-    uint32_t  dwLPFWtLUT3;
-    uint32_t  dwLPFWtLUT4;
-    uint32_t  dwLPFWtLUT5;
-    uint32_t  dwLPFWtLUT6;
-    uint32_t  dwLPFWtLUT7;
+    uint32_t  dwLumaTDMWeight   = 0;
+    uint32_t  dwChromaTDMWeight = 0;
+    uint32_t  dwSHCMDelta       = 0;
+    uint32_t  dwSHCMThreshold   = 0;
+    uint32_t  dwSVCMDelta       = 0;
+    uint32_t  dwSVCMThreshold   = 0;
+    bool      bFasterConvergence      = false;
+    bool      bTDMLumaSmallerWindow   = false;
+    bool      bTDMChromaSmallerWindow = false;
+    uint32_t  dwLumaTDMCoringThreshold   = 0;
+    uint32_t  dwChromaTDMCoringThreshold = 0;
+    bool      bBypassDeflickerFilter     = false;
+    bool      bUseSyntheticContentMedian = false;
+    bool      bLocalCheck                = false;
+    bool      bSyntheticContentCheck     = false;
+    bool      bSyntheticFrame            = false;
+    bool      bSCDEnable                 = false;
+    uint32_t  dwDirectionCheckThreshold  = 0;
+    uint32_t  dwTearingLowThreshold      = 0;
+    uint32_t  dwTearingHighThreshold     = 0;
+    uint32_t  dwDiffCheckSlackThreshold  = 0;
+    uint32_t  dwSADWT0                   = 0;
+    uint32_t  dwSADWT1                   = 0;
+    uint32_t  dwSADWT2                   = 0;
+    uint32_t  dwSADWT3                   = 0;
+    uint32_t  dwSADWT4                   = 0;
+    uint32_t  dwSADWT6                   = 0;
+    uint32_t  dwLPFWtLUT0                = 0;
+    uint32_t  dwLPFWtLUT1                = 0;
+    uint32_t  dwLPFWtLUT2                = 0;
+    uint32_t  dwLPFWtLUT3                = 0;
+    uint32_t  dwLPFWtLUT4                = 0;
+    uint32_t  dwLPFWtLUT5                = 0;
+    uint32_t  dwLPFWtLUT6                = 0;
+    uint32_t  dwLPFWtLUT7                = 0;
 
     //for SlimIPUDenoise
-    void *    pSystemMem = nullptr;
-    uint32_t  MemSizeInBytes;
-    bool      bEnableSlimIPUDenoise;
+    void *    pSystemMem            = nullptr;
+    uint32_t  MemSizeInBytes        = 0;
+    bool      bEnableSlimIPUDenoise = false;
 
+    // FDFB
+    bool      dndistateforFDFB      = false;
 } MHW_VEBOX_DNDI_PARAMS, *PMHW_VEBOX_DNDI_PARAMS;
 
 //!
@@ -623,6 +626,9 @@ typedef struct _MHW_VEBOX_IECP_PARAMS
     float                           *pfFeCscCoeff;                              // [3x3] Front End CSC Coeff matrix
     float                           *pfFeCscInOffset;                           // [3x1] Front End CSC Input Offset matrix
     float                           *pfFeCscOutOffset;                          // [3x1] Front End CSC Output Offset matrix
+
+    // FDFB
+    bool                            iecpstateforFDFB;
 } MHW_VEBOX_IECP_PARAMS, *PMHW_VEBOX_IECP_PARAMS;
 
 //!
@@ -692,6 +698,9 @@ typedef struct _MHW_VEBOX_GAMUT_PARAMS
     // HDR
     bool                                bH2S;
     uint16_t                            uiMaxCLL;
+
+    // FDFB
+    bool                                gamutstateforFDFB;
 } MHW_VEBOX_GAMUT_PARAMS, *PMHW_VEBOX_GAMUT_PARAMS;
 
 //!
@@ -741,26 +750,26 @@ typedef struct _MHW_VEBOX_DI_IECP_CMD_PARAMS
 //!
 typedef struct _MHW_VEBOX_SURFACE_PARAMS
 {
-    uint32_t                    bActive;
-    bool                        bIsCompressed;
-    MOS_FORMAT                  Format;              //!<  Surface format
-    MOS_RESOURCE_MMC_MODE       CompressionMode;     //!<  Surface Compression Mode
-    uint32_t                    dwCompressionFormat; //!<  Surface Compression Format
-    uint32_t                    dwWidth;             //!<  Surface width
-    uint32_t                    dwHeight;            //!<  Surface height
-    uint32_t                    dwPitch;             //!<  Surface pitch
-    uint32_t                    dwBitDepth;          //!<  Surface bitdepth
-    uint32_t                    dwStreamID;          //!<  Surface StreamID
-    uint32_t                    dwYoffset;           //!<  Surface Yoffset in Vertical
-    uint32_t                    dwUYoffset;          //!<  Surface Uoffset in Vertical
-    uint32_t                    dwOffset;            //!<  Surface Offset from Start Point
-    MOS_TILE_TYPE               TileType;            //!<  Tile Type
-    MOS_TILE_MODE_GMM           TileModeGMM;         //!<  Tile Mode from GMM Definition
-    bool                        bGMMTileEnabled;     //!<  GMM defined tile mode flag
-    RECT                        rcSrc = {0, 0, 0, 0};  //!< Source rectangle
-    RECT                        rcMaxSrc;            //!< Max source rectangle
-    bool                        bVEBOXCroppingUsed = false;  //!<Vebox crop case need use rcSrc as vebox input.
-    PMOS_RESOURCE               pOsResource;         //!<  Surface resource
+    uint32_t                    bActive             = 0;
+    bool                        bIsCompressed       = false;
+    MOS_FORMAT                  Format              = Format_None;       //!<  Surface format
+    MOS_RESOURCE_MMC_MODE       CompressionMode     = MOS_MMC_DISABLED;  //!<  Surface Compression Mode
+    uint32_t                    dwCompressionFormat = 0;     //!<  Surface Compression Format
+    uint32_t                    dwWidth             = 0;     //!<  Surface width
+    uint32_t                    dwHeight            = 0;     //!<  Surface height
+    uint32_t                    dwPitch             = 0;     //!<  Surface pitch
+    uint32_t                    dwBitDepth          = 0;     //!<  Surface bitdepth
+    uint32_t                    dwStreamID          = 0;     //!<  Surface StreamID
+    uint32_t                    dwYoffset           = 0;     //!<  Surface Yoffset in Vertical
+    uint32_t                    dwUYoffset          = 0;     //!<  Surface Uoffset in Vertical
+    uint32_t                    dwOffset            = 0;     //!<  Surface Offset from Start Point
+    MOS_TILE_TYPE               TileType            = MOS_TILE_X;           //!<  Tile Type
+    MOS_TILE_MODE_GMM           TileModeGMM         = MOS_TILE_LINEAR_GMM;  //!<  Tile Mode from GMM Definition
+    bool                        bGMMTileEnabled     = false;         //!<  GMM defined tile mode flag
+    RECT                        rcSrc               = {0, 0, 0, 0};  //!< Source rectangle
+    RECT                        rcMaxSrc            = {0, 0, 0, 0};  //!< Max source rectangle
+    bool                        bVEBOXCroppingUsed  = false;         //!<Vebox crop case need use rcSrc as vebox input.
+    PMOS_RESOURCE               pOsResource         = nullptr;            //!<  Surface resource
 } MHW_VEBOX_SURFACE_PARAMS, *PMHW_VEBOX_SURFACE_PARAMS;
 
 //!
@@ -768,14 +777,14 @@ typedef struct _MHW_VEBOX_SURFACE_PARAMS
 //!
 typedef struct _MHW_VEBOX_SURFACE_STATE_CMD_PARAMS
 {
-    MHW_VEBOX_SURFACE_PARAMS         SurfInput;
-    MHW_VEBOX_SURFACE_PARAMS         SurfOutput;
-    MHW_VEBOX_SURFACE_PARAMS         SurfSTMM;
-    MHW_VEBOX_SURFACE_PARAMS         SurfDNOutput;
-    MHW_VEBOX_SURFACE_PARAMS         SurfSkinScoreOutput;
-    bool                             bDIEnable;
-    bool                             b3DlutEnable;
-    bool                             bOutputValid;
+    MHW_VEBOX_SURFACE_PARAMS         SurfInput    = {};
+    MHW_VEBOX_SURFACE_PARAMS         SurfOutput   = {};
+    MHW_VEBOX_SURFACE_PARAMS         SurfSTMM     = {};
+    MHW_VEBOX_SURFACE_PARAMS         SurfDNOutput = {};
+    MHW_VEBOX_SURFACE_PARAMS         SurfSkinScoreOutput = {};
+    bool                             bDIEnable    = false;
+    bool                             b3DlutEnable = false;
+    bool                             bOutputValid = false;
 } MHW_VEBOX_SURFACE_STATE_CMD_PARAMS, *PMHW_VEBOX_SURFACE_STATE_CMD_PARAMS;
 
 //!
@@ -934,6 +943,8 @@ public:
         PMHW_VEBOX_IECP_PARAMS                  pVeboxIecpParams,
         PMHW_VEBOX_GAMUT_PARAMS                 pVeboxGamutParams) = 0;
 
+    virtual MOS_STATUS AddVeboxHdrState(PMHW_VEBOX_IECP_PARAMS pVeboxIecpParams) { return MOS_STATUS_SUCCESS;}
+
     //!
     //! \brief      Add VEBOX IECP States
     //! \details    Add Vebox IECP states STD/E, ACE, TCC, FECSC, BLC, ProcAmp, also add CapPipe state
@@ -1072,6 +1083,16 @@ public:
     virtual MOS_STATUS setVeboxPrologCmd(
         PMHW_MI_INTERFACE   mhwMiInterface,
         PMOS_COMMAND_BUFFER cmdBuffer) = 0;
+
+    virtual MOS_STATUS Add1DLutState(void *&surface, PMHW_1DLUT_PARAMS p1DLutParams) { return MOS_STATUS_SUCCESS; }
+
+    //!
+    //! \brief    Get new vebox interface, temporal solution before switching from
+    //!           old interface to new one
+    //!
+    //! \return   pointer to new render interface
+    //!
+    virtual std::shared_ptr<void> GetNewVeboxInterface() { return nullptr; }
 
 protected:
     MhwVeboxInterface(PMOS_INTERFACE pOsInterface);
@@ -1216,6 +1237,7 @@ private:
     PMHW_VEBOX_HEAP        m_veboxHeap     = nullptr;
     MHW_VEBOX_SETTINGS     m_veboxSettings;
     bool                   m_veboxScalabilitywith4K    = false;
+    std::shared_ptr<void>  m_veboxItfNew    = nullptr;
 };
 
 #endif // __MHW_VEBOX_H__

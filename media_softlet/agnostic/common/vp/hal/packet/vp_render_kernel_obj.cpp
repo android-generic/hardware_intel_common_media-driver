@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020-2021, Intel Corporation
+* Copyright (c) 2020-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -26,6 +26,7 @@
 //!
 #include "vp_render_kernel_obj.h"
 #include "vp_dumper.h"
+#include  "hal_oca_interface.h"
 
 using namespace vp;
 
@@ -35,9 +36,10 @@ VpRenderKernelObj::VpRenderKernelObj(PVP_MHWINTERFACE hwInterface, PVpAllocator 
 {
 }
 
-VpRenderKernelObj::VpRenderKernelObj(PVP_MHWINTERFACE hwInterface, VpKernelID kernelId, uint32_t kernelIndex) :
-    m_hwInterface(hwInterface), m_kernelId(kernelId), m_kernelIndex(kernelIndex)
+VpRenderKernelObj::VpRenderKernelObj(PVP_MHWINTERFACE hwInterface, VpKernelID kernelId, uint32_t kernelIndex, std::string kernelName, PVpAllocator allocator) :
+    m_hwInterface(hwInterface), m_allocator(allocator), m_kernelName(kernelName), m_kernelId(kernelId), m_kernelIndex(kernelIndex)
 {
+    VP_RENDER_NORMALMESSAGE("kernel name is %s, kernel ID is %d", kernelName.c_str(), kernelId);
 }
 
 VpRenderKernelObj::~VpRenderKernelObj()
@@ -99,6 +101,11 @@ MOS_STATUS VpRenderKernelObj::SetSamplerStates(KERNEL_SAMPLER_STATE_GROUP& sampl
     return MOS_STATUS_SUCCESS;
 }
 
+void VpRenderKernelObj::OcaDumpKernelInfo(MOS_COMMAND_BUFFER &cmdBuffer, MOS_CONTEXT &mosContext)
+{
+    HalOcaInterface::DumpVpKernelInfo(cmdBuffer, mosContext, m_kernelId, 0, nullptr);
+}
+
 // Only for Adv kernels.
 MOS_STATUS VpRenderKernelObj::SetWalkerSetting(KERNEL_THREAD_SPACE& threadSpace, bool bSyncFlag)
 {
@@ -107,7 +114,7 @@ MOS_STATUS VpRenderKernelObj::SetWalkerSetting(KERNEL_THREAD_SPACE& threadSpace,
     return MOS_STATUS_SUCCESS;
 }
 
-MOS_STATUS VpRenderKernelObj::SetKernelArgs(KERNEL_ARGS& kernelArgs)
+MOS_STATUS VpRenderKernelObj::SetKernelArgs(KERNEL_ARGS &kernelArgs, VP_PACKET_SHARED_CONTEXT *sharedContext)
 {
     VP_FUNC_CALL();
     VP_RENDER_CHK_STATUS_RETURN(MOS_STATUS_UNIMPLEMENTED);
@@ -118,11 +125,15 @@ MOS_STATUS VpRenderKernelObj::SetKernelArgs(KERNEL_ARGS& kernelArgs)
 MOS_STATUS VpRenderKernelObj::SetKernelConfigs(
     KERNEL_PARAMS& kernelParams,
     VP_SURFACE_GROUP& surfaces,
-    KERNEL_SAMPLER_STATE_GROUP& samplerStateGroup)
+    KERNEL_SAMPLER_STATE_GROUP& samplerStateGroup,
+    KERNEL_CONFIGS& kernelConfigs,
+    VP_PACKET_SHARED_CONTEXT* sharedContext)
 {
     VP_FUNC_CALL();
 
-    VP_RENDER_CHK_STATUS_RETURN(SetKernelArgs(kernelParams.kernelArgs));
+    VP_RENDER_CHK_STATUS_RETURN(SetKernelConfigs(kernelConfigs));
+
+    VP_RENDER_CHK_STATUS_RETURN(SetKernelArgs(kernelParams.kernelArgs, sharedContext));
 
     VP_RENDER_CHK_STATUS_RETURN(SetProcessSurfaceGroup(surfaces));
 
@@ -137,21 +148,26 @@ MOS_STATUS VpRenderKernelObj::SetKernelConfigs(KERNEL_CONFIGS& kernelConfigs)
 {
     VP_FUNC_CALL();
 
-    //For legacy kernel usage
     return MOS_STATUS_SUCCESS;
 }
 
-MOS_STATUS VpRenderKernelObj::InitKernel(void* binary, uint32_t size, KERNEL_CONFIGS& kernelConfigs, VP_SURFACE_GROUP& surfacesGroup)
+MOS_STATUS VpRenderKernelObj::InitKernel(void* binary, uint32_t size, KERNEL_CONFIGS& kernelConfigs,
+                                        VP_SURFACE_GROUP& surfacesGroup, VP_RENDER_CACHE_CNTL& surfMemCacheCtl)
 {
     VP_FUNC_CALL();
 
-    VP_RENDER_CHK_NULL_RETURN(binary);
+    if (kernelCombinedFc != m_kernelId)
+    {
+        VP_RENDER_CHK_NULL_RETURN(binary);
+    }
     // m_kernelBinary and m_kernelSize being nullptr and 0 for FC case.
     m_kernelBinary = binary;
     m_kernelSize = size;
-
+    SetCacheCntl(&surfMemCacheCtl);
     VP_RENDER_CHK_STATUS_RETURN(SetKernelConfigs(kernelConfigs));
     VP_RENDER_CHK_STATUS_RETURN(SetProcessSurfaceGroup(surfacesGroup));
+
+    VP_RENDER_NORMALMESSAGE("Kernel %d is in use.", m_kernelId);
 
     return MOS_STATUS_SUCCESS;
 }
@@ -183,7 +199,7 @@ void VpRenderKernelObj::DumpSurface(VP_SURFACE* pSurface, PCCHAR fileName)
     iWidthInBytes = pSurface->osSurface->dwWidth;
     iHeightInRows = pSurface->osSurface->dwHeight;
 
-    iSize = iWidthInBytes * iHeightInRows;
+    iSize = iWidthInBytes * iHeightInRows * iBpp / 8;
 
     // Write original image to file
     MOS_ZeroMemory(&LockFlags, sizeof(MOS_LOCK_PARAMS));
@@ -215,7 +231,7 @@ void VpRenderKernelObj::DumpSurface(VP_SURFACE* pSurface, PCCHAR fileName)
     // Write the data to file
     if (pSurface->osSurface->dwPitch == iWidthInBytes)
     {
-        MOS_WriteFileFromPtr((const char*)sPath, pData, iSize);
+        MosUtilities::MosWriteFileFromPtr((const char*)sPath, pData, iSize);
     }
     else
     {
@@ -225,12 +241,12 @@ void VpRenderKernelObj::DumpSurface(VP_SURFACE* pSurface, PCCHAR fileName)
 
         for (iY = 0; iY < iHeightInRows; iY++)
         {
-            MOS_SecureMemcpy(pTmpDst, iSize, pTmpSrc, iWidthInBytes);
+            MOS_SecureMemcpy(pTmpDst, iWidthInBytes * iBpp / 8, pTmpSrc, iWidthInBytes * iBpp / 8);
             pTmpSrc += pSurface->osSurface->dwPitch;
-            pTmpDst += iWidthInBytes;
+            pTmpDst += iWidthInBytes * iBpp / 8;
         }
 
-        MOS_WriteFileFromPtr((const char*)sPath, pDst, iSize);
+        MosUtilities::MosWriteFileFromPtr((const char*)sPath, pDst, iSize);
     }
 
     if (pDst)

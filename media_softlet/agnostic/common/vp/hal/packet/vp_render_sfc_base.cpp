@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2021, Intel Corporation
+* Copyright (c) 2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -33,22 +33,23 @@
 #include "mhw_sfc.h"
 #include "vp_render_ief.h"
 #include "mos_interface.h"
+#include "mhw_sfc_itf.h"
+#include "mhw_mi_itf.h"
+#include "vp_platform_interface.h"
 
 namespace vp {
 
 SfcRenderBase::SfcRenderBase(
     VP_MHWINTERFACE &vpMhwinterface,
-    PVpAllocator &allocator):
-    m_allocator(allocator)
+    PVpAllocator &allocator,
+    bool disbaleSfcDithering) :
+    m_allocator(allocator),
+    m_disableSfcDithering(disbaleSfcDithering)
 {
     VP_PUBLIC_CHK_NULL_NO_STATUS_RETURN(vpMhwinterface.m_osInterface);
-    VP_PUBLIC_CHK_NULL_NO_STATUS_RETURN(vpMhwinterface.m_sfcInterface);
-    VP_PUBLIC_CHK_NULL_NO_STATUS_RETURN(vpMhwinterface.m_mhwMiInterface);
     VP_PUBLIC_CHK_NULL_NO_STATUS_RETURN(vpMhwinterface.m_skuTable);
     VP_PUBLIC_CHK_NULL_NO_STATUS_RETURN(vpMhwinterface.m_waTable);
     m_osInterface   = vpMhwinterface.m_osInterface;
-    m_sfcInterface  = vpMhwinterface.m_sfcInterface;
-    m_miInterface   = vpMhwinterface.m_mhwMiInterface;
     m_skuTable      = vpMhwinterface.m_skuTable;
     m_waTable       = vpMhwinterface.m_waTable;
 
@@ -57,6 +58,9 @@ SfcRenderBase::SfcRenderBase(
       &m_AvsParameters,
       k_YCoefficientTableSize,
       k_UVCoefficientTableSize);
+
+    m_sfcItf = vpMhwinterface.m_vpPlatformInterface->GetMhwSfcItf();
+    m_miItf = vpMhwinterface.m_vpPlatformInterface->GetMhwMiItf();
 }
 
 SfcRenderBase::~SfcRenderBase()
@@ -83,7 +87,7 @@ MOS_STATUS SfcRenderBase::Init()
     MOS_ZeroMemory(&m_renderData, sizeof(m_renderData));
 
     m_bVdboxToSfc = false;
-    m_pipeMode = MhwSfcInterface::SFC_PIPE_MODE_VEBOX;
+    m_pipeMode = mhw::sfc::SFC_PIPE_MODE_VEBOX;
 
     m_scalabilityParams.numPipe = 1;
     m_scalabilityParams.curPipe = 0;
@@ -102,7 +106,7 @@ MOS_STATUS SfcRenderBase::SetCodecPipeMode(CODECHAL_STANDARD codecStandard)
         CODECHAL_VP8 == codecStandard ||
         CODECHAL_JPEG == codecStandard)
     {
-        m_pipeMode = MhwSfcInterface::SFC_PIPE_MODE_VDBOX;
+        m_pipeMode = mhw::sfc::SFC_PIPE_MODE_VDBOX;
     }
     else
     {
@@ -136,7 +140,7 @@ MOS_STATUS SfcRenderBase::Init(VIDEO_PARAMS &videoParams)
     return InitSfcStateParams();
 }
 
-void SfcRenderBase::SetRotationAndMirrowParams(PMHW_SFC_STATE_PARAMS psfcStateParams)
+void SfcRenderBase::SetRotationAndMirrowParams(mhw::sfc::SFC_STATE_PAR *psfcStateParams)
 {
     VP_FUNC_CALL();
 
@@ -147,7 +151,7 @@ void SfcRenderBase::SetRotationAndMirrowParams(PMHW_SFC_STATE_PARAMS psfcStatePa
     psfcStateParams->dwMirrorType  = m_renderData.mirrorType;
 }
 
-void SfcRenderBase::SetChromasitingParams(PMHW_SFC_STATE_PARAMS psfcStateParams)
+void SfcRenderBase::SetChromasitingParams(mhw::sfc::SFC_STATE_PAR *psfcStateParams)
 {
     VP_FUNC_CALL();
 
@@ -157,7 +161,7 @@ void SfcRenderBase::SetChromasitingParams(PMHW_SFC_STATE_PARAMS psfcStateParams)
 }
 
 void SfcRenderBase::SetColorFillParams(
-    PMHW_SFC_STATE_PARAMS       psfcStateParams)
+    mhw::sfc::SFC_STATE_PAR       *psfcStateParams)
 {
     VP_FUNC_CALL();
 
@@ -175,7 +179,7 @@ void SfcRenderBase::SetColorFillParams(
 }
 
 void SfcRenderBase::SetXYAdaptiveFilter(
-    PMHW_SFC_STATE_PARAMS       psfcStateParams)
+    mhw::sfc::SFC_STATE_PAR       *psfcStateParams)
 {
     VP_FUNC_CALL();
 
@@ -187,7 +191,7 @@ void SfcRenderBase::SetXYAdaptiveFilter(
         m_renderData.SfcInputFormat == Format_AYUV) &&
         (m_renderData.fScaleX > 1.0F                ||
         m_renderData.fScaleY > 1.0F)                &&
-        (psfcStateParams->dwAVSFilterMode != MEDIASTATE_SFC_AVS_FILTER_BILINEAR))
+        psfcStateParams->dwAVSFilterMode != MEDIASTATE_SFC_AVS_FILTER_BILINEAR)
     {
         //For AVS, we need set psfcStateParams->bBypassXAdaptiveFilter and bBypassYAdaptiveFilter as false;
         psfcStateParams->bBypassXAdaptiveFilter = false;
@@ -201,7 +205,7 @@ void SfcRenderBase::SetXYAdaptiveFilter(
 }
 
 void SfcRenderBase::SetRGBAdaptive(
-    PMHW_SFC_STATE_PARAMS       psfcStateParams)
+    mhw::sfc::SFC_STATE_PAR       *psfcStateParams)
 {
     VP_FUNC_CALL();
 
@@ -219,8 +223,8 @@ void SfcRenderBase::SetRGBAdaptive(
 }
 
 MOS_STATUS SfcRenderBase::SetIefStateCscParams(
-    PMHW_SFC_STATE_PARAMS           psfcStateParams,
-    PMHW_SFC_IEF_STATE_PARAMS       pIEFStateParams)
+    mhw::sfc::SFC_STATE_PAR           *psfcStateParams,
+    mhw::sfc::SFC_IEF_STATE_PAR       *pIEFStateParams)
 {
     VP_FUNC_CALL();
 
@@ -235,6 +239,7 @@ MOS_STATUS SfcRenderBase::SetIefStateCscParams(
         pIEFStateParams->bCSCEnable = true;
         if (m_bVdboxToSfc && m_videoConfig.codecStandard == CODECHAL_JPEG)
         {
+            m_cscInputSwapNeeded = false;
             if (m_videoConfig.jpeg.jpegChromaType == jpegRGB)
             {
                 m_cscCoeff[0] = 1.000000000f;
@@ -288,7 +293,7 @@ MOS_STATUS SfcRenderBase::SetIefStateCscParams(
         else if ((m_cscInputCspace != m_renderData.SfcInputCspace) ||
                 (m_renderData.pSfcPipeOutSurface && m_cscRTCspace != m_renderData.pSfcPipeOutSurface->ColorSpace))
         {
-            VpHal_GetCscMatrix(
+            VpUtils::GetCscMatrixForVeSfc8Bit(
                 m_renderData.SfcInputCspace,
                 m_renderData.pSfcPipeOutSurface->ColorSpace,
                 m_cscCoeff,
@@ -311,11 +316,38 @@ MOS_STATUS SfcRenderBase::SetIefStateCscParams(
                 m_cscCoeff[2] = fTemp[0];
                 m_cscCoeff[5] = fTemp[1];
                 m_cscCoeff[8] = fTemp[2];
+                m_cscInputSwapNeeded = true;
+            }
+            else
+            {
+                m_cscInputSwapNeeded = false;
             }
 
             m_cscInputCspace = m_renderData.SfcInputCspace;
             m_cscRTCspace    = m_renderData.pSfcPipeOutSurface->ColorSpace;
         }
+        else if (m_cscInputSwapNeeded != IsInputChannelSwapNeeded(m_renderData.SfcInputFormat))
+        {
+            float fTemp[3] = {};
+            fTemp[0]       = m_cscCoeff[0];
+            fTemp[1]       = m_cscCoeff[3];
+            fTemp[2]       = m_cscCoeff[6];
+
+            m_cscCoeff[0] = m_cscCoeff[2];
+            m_cscCoeff[3] = m_cscCoeff[5];
+            m_cscCoeff[6] = m_cscCoeff[8];
+
+            m_cscCoeff[2]   = fTemp[0];
+            m_cscCoeff[5]   = fTemp[1];
+            m_cscCoeff[8]   = fTemp[2];
+
+            m_cscInputSwapNeeded = IsInputChannelSwapNeeded(m_renderData.SfcInputFormat);
+        }
+        else
+        {
+            VP_PUBLIC_NORMALMESSAGE("Keep the value of m_cscInputSwapNeeded.");
+        }
+
         pIEFStateParams->pfCscCoeff     = m_cscCoeff;
         pIEFStateParams->pfCscInOffset  = m_cscInOffset;
         pIEFStateParams->pfCscOutOffset = m_cscOutOffset;
@@ -324,11 +356,11 @@ MOS_STATUS SfcRenderBase::SetIefStateCscParams(
 }
 
 MOS_STATUS SfcRenderBase::SetIefStateParams(
-    PMHW_SFC_STATE_PARAMS           psfcStateParams)
+    mhw::sfc::SFC_STATE_PAR           *psfcStateParams)
 {
     VP_FUNC_CALL();
 
-    PMHW_SFC_IEF_STATE_PARAMS   pIefStateParams = nullptr;
+    mhw::sfc::SFC_IEF_STATE_PAR   *pIefStateParams = nullptr;
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
 
     VP_RENDER_CHK_NULL_RETURN(psfcStateParams);
@@ -358,11 +390,9 @@ MOS_STATUS SfcRenderBase::SetAvsStateParams()
     VP_FUNC_CALL();
 
     MOS_STATUS                  eStatus            = MOS_STATUS_SUCCESS;
-    PMHW_SFC_AVS_STATE          pMhwAvsState       = nullptr;
+    mhw::sfc::SFC_AVS_STATE_PAR *pMhwAvsState       = nullptr;
     MHW_SCALING_MODE            scalingMode        = MHW_SCALING_AVS;
     bool                        bUse8x8Filter      = false;
-
-    VP_RENDER_CHK_NULL_RETURN(m_sfcInterface);
 
     pMhwAvsState = &m_avsState.AvsStateParams;
     MOS_ZeroMemory(pMhwAvsState, sizeof(MHW_SFC_AVS_STATE));
@@ -373,7 +403,7 @@ MOS_STATUS SfcRenderBase::SetAvsStateParams()
     {
         if (m_renderData.SfcSrcChromaSiting == MHW_CHROMA_SITING_NONE)
         {
-            if (VpHal_GetSurfaceColorPack(m_renderData.SfcInputFormat) == VPHAL_COLORPACK_420) // For 420, default is Left & Center, else default is Left & Top
+            if (VpUtils::GetSurfaceColorPack(m_renderData.SfcInputFormat) == VPHAL_COLORPACK_420) // For 420, default is Left & Center, else default is Left & Top
             {
                 m_renderData.SfcSrcChromaSiting = MHW_CHROMA_SITING_HORZ_LEFT | MHW_CHROMA_SITING_VERT_CENTER;
             }
@@ -403,7 +433,7 @@ MOS_STATUS SfcRenderBase::SetAvsStateParams()
         {
             scalingMode = MHW_SCALING_AVS;
         }
-        VP_RENDER_CHK_STATUS_RETURN(m_sfcInterface->SetSfcAVSScalingMode(scalingMode));
+        VP_RENDER_CHK_STATUS_RETURN(SetSfcAVSScalingMode(scalingMode));
 
         if (m_renderData.sfcStateParams)
         {
@@ -422,7 +452,7 @@ MOS_STATUS SfcRenderBase::SetAvsStateParams()
         m_avsState.LumaCoeffs.sfcPipeMode   = m_pipeMode;
         m_avsState.ChromaCoeffs.sfcPipeMode = m_pipeMode;
 
-        VP_RENDER_CHK_STATUS_RETURN(m_sfcInterface->SetSfcSamplerTable(
+        VP_RENDER_CHK_STATUS_RETURN(SetSfcSamplerTable(
             &m_avsState.LumaCoeffs,
             &m_avsState.ChromaCoeffs,
             m_renderData.pAvsParams,
@@ -543,7 +573,7 @@ MOS_STATUS SfcRenderBase::SetScalingParams(PSFC_SCALING_PARAMS scalingParams)
 
     VP_PUBLIC_CHK_NULL_RETURN(scalingParams);
 
-    if (MhwSfcInterface::SFC_PIPE_MODE_VEBOX != m_pipeMode                          &&
+    if (mhw::sfc::SFC_PIPE_MODE_VEBOX      != m_pipeMode                          &&
         (scalingParams->dwInputFrameHeight != scalingParams->dwSourceRegionHeight   ||
         scalingParams->dwInputFrameWidth != scalingParams->dwSourceRegionWidth))
     {
@@ -572,7 +602,7 @@ MOS_STATUS SfcRenderBase::SetScalingParams(PSFC_SCALING_PARAMS scalingParams)
     m_renderData.sfcStateParams->dwInputFrameWidth              = scalingParams->dwInputFrameWidth;
     m_renderData.sfcStateParams->dwAVSFilterMode                = scalingParams->bBilinearScaling ?
                                                                     MEDIASTATE_SFC_AVS_FILTER_BILINEAR :
-                                                                    (MhwSfcInterface::SFC_PIPE_MODE_VDBOX == m_pipeMode ?
+                                                                    (mhw::sfc::SFC_PIPE_MODE_VDBOX == m_pipeMode ?
                                                                         MEDIASTATE_SFC_AVS_FILTER_5x5 : MEDIASTATE_SFC_AVS_FILTER_8x8);
     m_renderData.sfcStateParams->dwSourceRegionHeight           = scalingParams->dwSourceRegionHeight;
     m_renderData.sfcStateParams->dwSourceRegionWidth            = scalingParams->dwSourceRegionWidth;
@@ -582,6 +612,18 @@ MOS_STATUS SfcRenderBase::SetScalingParams(PSFC_SCALING_PARAMS scalingParams)
     m_renderData.sfcStateParams->dwScaledRegionWidth            = scalingParams->dwScaledRegionWidth;
     m_renderData.sfcStateParams->dwScaledRegionVerticalOffset   = scalingParams->dwScaledRegionVerticalOffset;
     m_renderData.sfcStateParams->dwScaledRegionHorizontalOffset = scalingParams->dwScaledRegionHorizontalOffset;
+    if (scalingParams->bRectangleEnabled)
+    {
+        m_renderData.sfcStateParams->bRectangleEnabled                      = true;
+        m_renderData.sfcStateParams->dwTargetRectangleStartHorizontalOffset = scalingParams->dwTargetRectangleStartHorizontalOffset;
+        m_renderData.sfcStateParams->dwTargetRectangleStartVerticalOffset   = scalingParams->dwTargetRectangleStartVerticalOffset;
+        m_renderData.sfcStateParams->dwTargetRectangleEndHorizontalOffset   = scalingParams->dwTargetRectangleEndHorizontalOffset;
+        m_renderData.sfcStateParams->dwTargetRectangleEndVerticalOffset     = scalingParams->dwTargetRectangleEndVerticalOffset;
+    }
+    else
+    {
+        m_renderData.sfcStateParams->bRectangleEnabled = false;
+    }
     m_renderData.sfcStateParams->fAVSXScalingRatio              = scalingParams->fAVSXScalingRatio;
     m_renderData.sfcStateParams->fAVSYScalingRatio              = scalingParams->fAVSYScalingRatio;
 
@@ -737,7 +779,7 @@ MOS_STATUS SfcRenderBase::SetCSCParams(PSFC_CSC_PARAMS cscParams)
 
     VP_PUBLIC_CHK_NULL_RETURN(cscParams);
 
-    if (MhwSfcInterface::SFC_PIPE_MODE_VEBOX == m_pipeMode)
+    if (mhw::sfc::SFC_PIPE_MODE_VEBOX == m_pipeMode)
     {
         m_renderData.bIEF           = cscParams->bIEFEnable;
         m_renderData.pIefParams     = cscParams->iefParams;
@@ -758,10 +800,23 @@ MOS_STATUS SfcRenderBase::SetCSCParams(PSFC_CSC_PARAMS cscParams)
     m_renderData.sfcStateParams->bRGBASwapEnable = IsOutputChannelSwapNeeded(cscParams->outputFormat);
     m_renderData.sfcStateParams->bInputColorSpace = cscParams->isInputColorSpaceRGB;
 
+    // Dithering parameter
+    if (cscParams->isDitheringNeeded && !m_disableSfcDithering)
+    {
+        m_renderData.sfcStateParams->ditheringEn = true;
+    }
+    else
+    {
+        m_renderData.sfcStateParams->ditheringEn = false;
+    }
+    VP_PUBLIC_NORMALMESSAGE("cscParams.isDitheringNeeded = %d, m_disableSfcDithering = %d, ditheringEn = %d", 
+        cscParams->isDitheringNeeded, m_disableSfcDithering, m_renderData.sfcStateParams->ditheringEn);
+
+
     // Chromasitting config
     // VEBOX use polyphase coefficients for 1x scaling for better quality,
     // VDBOX dosen't use polyphase coefficients.
-    if (MhwSfcInterface::SFC_PIPE_MODE_VEBOX == m_pipeMode)
+    if (mhw::sfc::SFC_PIPE_MODE_VEBOX == m_pipeMode)
     {
         m_renderData.bForcePolyPhaseCoefs = cscParams->bChromaUpSamplingEnable;
     }
@@ -788,7 +843,7 @@ MOS_STATUS SfcRenderBase::SetRotMirParams(PSFC_ROT_MIR_PARAMS rotMirParams)
 
     VP_PUBLIC_CHK_NULL_RETURN(rotMirParams);
 
-    if (MhwSfcInterface::SFC_PIPE_MODE_VEBOX != m_pipeMode      &&
+    if (mhw::sfc::SFC_PIPE_MODE_VEBOX != m_pipeMode      &&
         VPHAL_ROTATION_IDENTITY != rotMirParams->rotationMode   &&
         VPHAL_MIRROR_HORIZONTAL != rotMirParams->rotationMode)
     {
@@ -839,12 +894,12 @@ MOS_STATUS SfcRenderBase::SetMmcParams(PMOS_SURFACE renderTarget, bool isFormalM
 }
 
 MOS_STATUS SfcRenderBase::SetSfcStateInputChromaSubSampling(
-    PMHW_SFC_STATE_PARAMS       sfcStateParams)
+    mhw::sfc::SFC_STATE_PAR       *sfcStateParams)
 {
     VP_FUNC_CALL();
 
     VP_PUBLIC_CHK_NULL_RETURN(sfcStateParams);
-    VPHAL_COLORPACK colorPack = VpHal_GetSurfaceColorPack(m_renderData.SfcInputFormat);
+    VPHAL_COLORPACK colorPack = VpUtils::GetSurfaceColorPack(m_renderData.SfcInputFormat);
     if (VPHAL_COLORPACK_400 == colorPack)
     {
         sfcStateParams->dwInputChromaSubSampling = MEDIASTATE_SFC_CHROMA_SUBSAMPLING_400;
@@ -873,7 +928,7 @@ MOS_STATUS SfcRenderBase::SetSfcStateInputChromaSubSampling(
 }
 
 MOS_STATUS SfcRenderBase::SetSfcStateInputOrderingMode(
-    PMHW_SFC_STATE_PARAMS       sfcStateParams)
+    mhw::sfc::SFC_STATE_PAR       *sfcStateParams)
 {
     VP_FUNC_CALL();
 
@@ -883,7 +938,7 @@ MOS_STATUS SfcRenderBase::SetSfcStateInputOrderingMode(
     {
         VP_PUBLIC_CHK_STATUS_RETURN(SetSfcStateInputOrderingModeVdbox(sfcStateParams));
     }
-    else if (MhwSfcInterface::SFC_PIPE_MODE_VEBOX == m_pipeMode)
+    else if (mhw::sfc::SFC_PIPE_MODE_VEBOX == m_pipeMode)
     {
         sfcStateParams->dwVDVEInputOrderingMode = MEDIASTATE_SFC_INPUT_ORDERING_VE_4x8;
     }
@@ -899,7 +954,7 @@ MOS_STATUS SfcRenderBase::SetSfcStateInputOrderingMode(
 }
 
 MOS_STATUS SfcRenderBase::SetSfcStateInputOrderingModeVdbox(
-    PMHW_SFC_STATE_PARAMS       sfcStateParams)
+    mhw::sfc::SFC_STATE_PAR       *sfcStateParams)
 {
     VP_FUNC_CALL();
 
@@ -930,7 +985,7 @@ MOS_STATUS SfcRenderBase::SetSfcStateInputOrderingModeVdbox(
 }
 
 MOS_STATUS SfcRenderBase::SetSfcStateInputOrderingModeJpeg(
-    PMHW_SFC_STATE_PARAMS       sfcStateParams)
+    mhw::sfc::SFC_STATE_PAR       *sfcStateParams)
 {
     VP_FUNC_CALL();
 
@@ -966,6 +1021,12 @@ MOS_STATUS SfcRenderBase::SetSfcStateInputOrderingModeJpeg(
         return MOS_STATUS_INVALID_PARAMETER;
     }
     return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderBase::SetSfcStateInputOrderingModeHcp(
+    mhw::sfc::SFC_STATE_PAR* pSfcStateParams)
+{
+    return MOS_STATUS_UNIMPLEMENTED;
 }
 
 MOS_STATUS SfcRenderBase::InitMhwOutSurfParams(
@@ -1007,41 +1068,21 @@ MOS_STATUS SfcRenderBase::InitMhwOutSurfParams(
     return eStatus;
 }
 
-MOS_STATUS SfcRenderBase::AddSfcLock(
-    PMOS_COMMAND_BUFFER            pCmdBuffer,
-    PMHW_SFC_LOCK_PARAMS           pSfcLockParams)
-{
-    VP_FUNC_CALL();
-
-    VP_RENDER_CHK_NULL_RETURN(m_sfcInterface);
-
-    // Send SFC_LOCK command to acquire SFC pipe for Vebox
-    VP_RENDER_CHK_STATUS_RETURN(m_sfcInterface->AddSfcLock(
-        pCmdBuffer,
-        pSfcLockParams));
-
-    return MOS_STATUS_SUCCESS;
-}
-
 MOS_STATUS SfcRenderBase::SendSfcCmd(
     bool                            bOutputToMemory,
     PMOS_COMMAND_BUFFER             pCmdBuffer)
 {
     VP_FUNC_CALL();
 
-    PMHW_SFC_INTERFACE              pSfcInterface;
-    MHW_SFC_LOCK_PARAMS             SfcLockParams;
+    mhw::sfc::SFC_LOCK_PAR          SfcLockParams;
     MOS_STATUS                      eStatus;
     MHW_SFC_OUT_SURFACE_PARAMS      OutSurfaceParam;
 
-    VP_RENDER_CHK_NULL_RETURN(m_sfcInterface);
     VP_RENDER_CHK_NULL_RETURN(pCmdBuffer);
 
     eStatus                 = MOS_STATUS_SUCCESS;
-    pSfcInterface           = m_sfcInterface;
 
-    // Setup params for SFC Lock command
-    SfcLockParams.sfcPipeMode     = m_pipeMode;
+    SfcLockParams.sfcPipeMode = m_pipeMode;
     SfcLockParams.bOutputToMemory = bOutputToMemory;
 
     // Send SFC_LOCK command to acquire SFC pipe for Vebox
@@ -1054,13 +1095,13 @@ MOS_STATUS SfcRenderBase::SendSfcCmd(
         &OutSurfaceParam));
 
     // Send SFC_STATE command
-    VP_RENDER_CHK_STATUS_RETURN(pSfcInterface->AddSfcState(
+    VP_RENDER_CHK_STATUS_RETURN(AddSfcState(
         pCmdBuffer,
         m_renderData.sfcStateParams,
         &OutSurfaceParam));
 
     // Send SFC_AVS_STATE command
-    VP_RENDER_CHK_STATUS_RETURN(pSfcInterface->AddSfcAvsState(
+    VP_RENDER_CHK_STATUS_RETURN(AddSfcAvsState(
         pCmdBuffer,
         &m_avsState.AvsStateParams));
 
@@ -1068,12 +1109,12 @@ MOS_STATUS SfcRenderBase::SendSfcCmd(
         m_renderData.bForcePolyPhaseCoefs)
     {
         // Send SFC_AVS_LUMA_TABLE command
-        VP_RENDER_CHK_STATUS_RETURN(pSfcInterface->AddSfcAvsLumaTable(
+        VP_RENDER_CHK_STATUS_RETURN(AddSfcAvsLumaTable(
             pCmdBuffer,
             &m_avsState.LumaCoeffs));
 
         // Send SFC_AVS_CHROMA_TABLE command
-        VP_RENDER_CHK_STATUS_RETURN(pSfcInterface->AddSfcAvsChromaTable(
+        VP_RENDER_CHK_STATUS_RETURN(AddSfcAvsChromaTable(
             pCmdBuffer,
             &m_avsState.ChromaCoeffs));
     }
@@ -1082,13 +1123,14 @@ MOS_STATUS SfcRenderBase::SendSfcCmd(
     if (m_renderData.bIEF || m_renderData.bCSC)
     {
         // Will modified when enable IEF/CSC
-      VP_RENDER_CHK_STATUS_RETURN(pSfcInterface->AddSfcIefState(
+        VP_RENDER_CHK_STATUS_RETURN(AddSfcIefState(
             pCmdBuffer,
             &m_IefStateParams));
+        //SETPAR_AND_ADDCMD(SFC_IEF_STATE, sfcItf, pCmdBuffer);
     }
 
     // Send SFC_FRAME_START command to start processing a frame
-    VP_RENDER_CHK_STATUS_RETURN(pSfcInterface->AddSfcFrameStart(
+    VP_RENDER_CHK_STATUS_RETURN(AddSfcFrameStart(
         pCmdBuffer,
         m_pipeMode));
 
@@ -1155,7 +1197,7 @@ uint32_t SfcRenderBase::GetAvsLineBufferSize(bool lineTiledBuffer, bool b8tapChr
     uint32_t size = 0;
     uint32_t linebufferSizePerPixel = 0;
 
-    if (MhwSfcInterface::SFC_PIPE_MODE_VDBOX == m_pipeMode)
+    if (mhw::sfc::SFC_PIPE_MODE_VDBOX == m_pipeMode)
     {
         if (b8tapChromafiltering)
         {
@@ -1180,7 +1222,7 @@ uint32_t SfcRenderBase::GetAvsLineBufferSize(bool lineTiledBuffer, bool b8tapChr
     }
 
     // For VD+SFC mode, width needs be used. For VE+SFC mode, height needs be used.
-    if (MhwSfcInterface::SFC_PIPE_MODE_VEBOX == m_pipeMode)
+    if (mhw::sfc::SFC_PIPE_MODE_VEBOX == m_pipeMode)
     {
         size = height * linebufferSizePerPixel;
     }
@@ -1207,7 +1249,7 @@ uint32_t SfcRenderBase::GetIefLineBufferSize(bool lineTiledBuffer, uint32_t heig
     uint32_t size = 0;
 
     // For VE+SFC mode, height needs be used.
-    if (MhwSfcInterface::SFC_PIPE_MODE_VEBOX == m_pipeMode)
+    if (mhw::sfc::SFC_PIPE_MODE_VEBOX == m_pipeMode)
     {
         size = heightOutput * SFC_IEF_LINEBUFFER_SIZE_PER_VERTICAL_PIXEL;
     }
@@ -1233,9 +1275,9 @@ uint32_t SfcRenderBase::GetSfdLineBufferSize(bool lineTiledBuffer, MOS_FORMAT fo
     int size = 0;
 
     // For VD+SFC mode, width needs be used. For VE+SFC mode, height needs be used.
-    if (MhwSfcInterface::SFC_PIPE_MODE_VEBOX == m_pipeMode)
+    if (mhw::sfc::SFC_PIPE_MODE_VEBOX == m_pipeMode)
     {
-        size = (VPHAL_COLORPACK_444 == VpHal_GetSurfaceColorPack(formatOutput)) ? 0 : (heightOutput * SFC_SFD_LINEBUFFER_SIZE_PER_PIXEL);
+        size = (VPHAL_COLORPACK_444 == VpUtils::GetSurfaceColorPack(formatOutput)) ? 0 : (heightOutput * SFC_SFD_LINEBUFFER_SIZE_PER_PIXEL);
     }
     else
     {
@@ -1288,7 +1330,7 @@ MOS_STATUS SfcRenderBase::AllocateLineBuffer(VP_SURFACE *&lineBuffer, uint32_t s
                                       MOS_HW_RESOURCE_USAGE_VP_INTERNAL_READ_WRITE_FF,
                                       MOS_TILE_UNSET_GMM,
                                       memTypeSurfVideoMem,
-                                      MOS_MEMPOOL_DEVICEMEMORY == memTypeSurfVideoMem));
+                                      VPP_INTER_RESOURCE_NOTLOCKABLE));
     }
     else if (lineBuffer)
     {
@@ -1316,12 +1358,9 @@ MOS_STATUS SfcRenderBase::AllocateResources()
     VP_FUNC_CALL();
 
     uint32_t                size;
-    PMHW_SFC_STATE_PARAMS   sfcStateParams;
 
     VP_RENDER_CHK_NULL_RETURN(m_allocator);
     VP_RENDER_CHK_NULL_RETURN(m_renderData.sfcStateParams);
-
-    sfcStateParams = m_renderData.sfcStateParams;
 
     if (m_scalabilityParams.numPipe > m_lineBufferAllocatedInArray    ||
         nullptr == m_AVSLineBufferSurfaceArray      ||
@@ -1341,27 +1380,27 @@ MOS_STATUS SfcRenderBase::AllocateResources()
     }
 
     // Allocate AVS Line Buffer surface----------------------------------------------
-    size = GetAvsLineBufferSize(false, sfcStateParams->b8tapChromafiltering, sfcStateParams->dwInputFrameWidth, sfcStateParams->dwInputFrameHeight);
+    size = GetAvsLineBufferSize(false, m_renderData.sfcStateParams->b8tapChromafiltering, m_renderData.sfcStateParams->dwInputFrameWidth, m_renderData.sfcStateParams->dwInputFrameHeight);
     VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_AVSLineBufferSurfaceArray, size, "SfcAVSLineBufferSurface"));
 
     // Allocate IEF Line Buffer surface----------------------------------------------
-    size = GetIefLineBufferSize(false, sfcStateParams->dwScaledRegionHeight);
+    size = GetIefLineBufferSize(false, m_renderData.sfcStateParams->dwScaledRegionHeight);
     VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_IEFLineBufferSurfaceArray, size, "SfcIEFLineBufferSurface"));
 
     // Allocate SFD Line Buffer surface
-    size = GetSfdLineBufferSize(false, sfcStateParams->OutputFrameFormat, sfcStateParams->dwScaledRegionWidth, sfcStateParams->dwScaledRegionHeight);
+    size = GetSfdLineBufferSize(false, m_renderData.sfcStateParams->OutputFrameFormat, m_renderData.sfcStateParams->dwScaledRegionWidth, m_renderData.sfcStateParams->dwScaledRegionHeight);
     VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_SFDLineBufferSurfaceArray, size, "SfcSFDLineBufferSurface"));
 
     // Allocate AVS Line Tile Buffer surface----------------------------------------------
-    size = GetAvsLineBufferSize(true, sfcStateParams->b8tapChromafiltering, sfcStateParams->dwInputFrameWidth, sfcStateParams->dwInputFrameHeight);
+    size = GetAvsLineBufferSize(true, m_renderData.sfcStateParams->b8tapChromafiltering, m_renderData.sfcStateParams->dwInputFrameWidth, m_renderData.sfcStateParams->dwInputFrameHeight);
     VP_RENDER_CHK_STATUS_RETURN(AllocateLineBuffer(m_AVSLineTileBufferSurface, size, "SfcAVSLineTileBufferSurface"));
 
     // Allocate IEF Line Tile Buffer surface----------------------------------------------
-    size = GetIefLineBufferSize(true, sfcStateParams->dwScaledRegionHeight);
+    size = GetIefLineBufferSize(true, m_renderData.sfcStateParams->dwScaledRegionHeight);
     VP_RENDER_CHK_STATUS_RETURN(AllocateLineBuffer(m_IEFLineTileBufferSurface, size, "SfcIEFLineTileBufferSurface"));
 
     // Allocate SFD Line Tile Buffer surface
-    size = GetSfdLineBufferSize(true, sfcStateParams->OutputFrameFormat, sfcStateParams->dwScaledRegionWidth, sfcStateParams->dwScaledRegionHeight);
+    size = GetSfdLineBufferSize(true, m_renderData.sfcStateParams->OutputFrameFormat, m_renderData.sfcStateParams->dwScaledRegionWidth, m_renderData.sfcStateParams->dwScaledRegionHeight);
     VP_RENDER_CHK_STATUS_RETURN(AllocateLineBuffer(m_SFDLineTileBufferSurface, size, "SfcSFDLineTileBufferSurface"));
 
     return MOS_STATUS_SUCCESS;
@@ -1423,5 +1462,183 @@ MOS_STATUS SfcRenderBase::SetHistogramBuf(PMOS_BUFFER histogramBuf)
     }
 
     return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderBase::AddSfcLock(
+    PMOS_COMMAND_BUFFER            pCmdBuffer,
+    mhw::sfc::SFC_LOCK_PAR         *sfcLockParams)
+{
+    VP_FUNC_CALL();
+
+    VP_RENDER_CHK_NULL_RETURN(m_sfcItf);
+
+    auto& params = m_sfcItf->MHW_GETPAR_F(SFC_LOCK)();
+    params = {};
+    params = *sfcLockParams;
+
+    // Send SFC_LOCK command to acquire SFC pipe for Vebox
+    VP_RENDER_CHK_STATUS_RETURN(m_sfcItf->MHW_ADDCMD_F(SFC_LOCK)(pCmdBuffer));
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderBase::AddSfcState(
+    PMOS_COMMAND_BUFFER            pCmdBuffer,
+    mhw::sfc::SFC_STATE_PAR        *pSfcStateParams,
+    PMHW_SFC_OUT_SURFACE_PARAMS    pOutSurface)
+{
+    VP_FUNC_CALL();
+
+    VP_RENDER_CHK_NULL_RETURN(pSfcStateParams);
+    VP_RENDER_CHK_NULL_RETURN(m_sfcItf);
+
+    auto& params = m_sfcItf->MHW_GETPAR_F(SFC_STATE)();
+    params = {};
+    params = *pSfcStateParams;
+    params.pOutSurface = pOutSurface;
+
+    // Send SFC_LOCK command to acquire SFC pipe for Vebox
+    VP_RENDER_CHK_STATUS_RETURN(m_sfcItf->MHW_ADDCMD_F(SFC_STATE)(pCmdBuffer));
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderBase::AddSfcAvsState(
+    PMOS_COMMAND_BUFFER             pCmdBuffer,
+    mhw::sfc::SFC_AVS_STATE_PAR     *pSfcAvsStateParams)
+{
+    VP_FUNC_CALL();
+
+    VP_RENDER_CHK_NULL_RETURN(pSfcAvsStateParams);
+    VP_RENDER_CHK_NULL_RETURN(m_sfcItf);
+
+    auto& params = m_sfcItf->MHW_GETPAR_F(SFC_AVS_STATE)();
+    params = {};
+    params = *pSfcAvsStateParams;
+
+    VP_RENDER_CHK_STATUS_RETURN(m_sfcItf->MHW_ADDCMD_F(SFC_AVS_STATE)(pCmdBuffer));
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderBase::AddSfcIefState(
+    PMOS_COMMAND_BUFFER            pCmdBuffer,
+    mhw::sfc::SFC_IEF_STATE_PAR    *pSfcIefStateParams)
+{
+    VP_FUNC_CALL();
+
+    VP_RENDER_CHK_NULL_RETURN(pSfcIefStateParams);
+    VP_RENDER_CHK_NULL_RETURN(m_sfcItf);
+
+    auto& params = m_sfcItf->MHW_GETPAR_F(SFC_IEF_STATE)();
+    params = {};
+    params = *pSfcIefStateParams;
+
+    VP_RENDER_CHK_STATUS_RETURN(m_sfcItf->MHW_ADDCMD_F(SFC_IEF_STATE)(pCmdBuffer));
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderBase::AddSfcAvsLumaTable(
+    PMOS_COMMAND_BUFFER                pCmdBuffer,
+    mhw::sfc::SFC_AVS_LUMA_Coeff_Table_PAR *pLumaTable)
+{
+    VP_FUNC_CALL();
+
+    VP_RENDER_CHK_NULL_RETURN(pLumaTable);
+    VP_RENDER_CHK_NULL_RETURN(m_sfcItf);
+
+    auto& params = m_sfcItf->MHW_GETPAR_F(SFC_AVS_LUMA_Coeff_Table)();
+    params = {};
+    params = *pLumaTable;
+
+    VP_RENDER_CHK_STATUS_RETURN(m_sfcItf->MHW_ADDCMD_F(SFC_AVS_LUMA_Coeff_Table)(pCmdBuffer));
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderBase::AddSfcAvsChromaTable(
+    PMOS_COMMAND_BUFFER             pCmdBuffer,
+    mhw::sfc::SFC_AVS_CHROMA_Coeff_Table_PAR       *pChromaTable)
+{
+    VP_FUNC_CALL();
+    VP_RENDER_CHK_NULL_RETURN(pChromaTable);
+    VP_RENDER_CHK_NULL_RETURN(m_sfcItf);
+
+    auto& params = m_sfcItf->MHW_GETPAR_F(SFC_AVS_CHROMA_Coeff_Table)();
+    params = {};
+    params = *pChromaTable;
+
+    VP_RENDER_CHK_STATUS_RETURN(m_sfcItf->MHW_ADDCMD_F(SFC_AVS_CHROMA_Coeff_Table)(pCmdBuffer));
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderBase::AddSfcFrameStart(
+    PMOS_COMMAND_BUFFER            pCmdBuffer,
+    uint8_t                        sfcPipeMode)
+{
+    VP_FUNC_CALL();
+    VP_RENDER_CHK_NULL_RETURN(m_sfcItf);
+
+    auto& SfcFrameStartParams = m_sfcItf->MHW_GETPAR_F(SFC_FRAME_START)();
+    SfcFrameStartParams = {};
+    SfcFrameStartParams.sfcPipeMode = m_pipeMode;
+    VP_RENDER_CHK_STATUS_RETURN(m_sfcItf->MHW_ADDCMD_F(SFC_FRAME_START)(pCmdBuffer));
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS SfcRenderBase::SetSfcAVSScalingMode(
+    MHW_SCALING_MODE  ScalingMode)
+{
+    VP_FUNC_CALL();
+
+    MOS_STATUS                      eStatus;
+
+    eStatus = MOS_STATUS_SUCCESS;
+    VP_RENDER_CHK_NULL_RETURN(m_sfcItf);
+
+    // Send SFC_FRAME_START command to start processing a frame
+    VP_RENDER_CHK_STATUS_RETURN(m_sfcItf->SetSfcAVSScalingMode(
+        ScalingMode));
+
+    return eStatus;
+}
+
+MOS_STATUS SfcRenderBase::SetSfcSamplerTable(
+    mhw::sfc::SFC_AVS_LUMA_Coeff_Table_PAR   *pLumaTable,
+    mhw::sfc::SFC_AVS_CHROMA_Coeff_Table_PAR *pChromaTable,
+    PMHW_AVS_PARAMS                 pAvsParams,
+    MOS_FORMAT                      SrcFormat,
+    float                           fScaleX,
+    float                           fScaleY,
+    uint32_t                        dwChromaSiting,
+    bool                            bUse8x8Filter,
+    float                           fHPStrength,
+    float                           fLanczosT)
+{
+    VP_FUNC_CALL();
+
+    MOS_STATUS                      eStatus;
+
+    eStatus = MOS_STATUS_SUCCESS;
+    VP_RENDER_CHK_NULL_RETURN(m_sfcItf);
+    VP_RENDER_CHK_NULL_RETURN(pLumaTable);
+    VP_RENDER_CHK_NULL_RETURN(pChromaTable);
+    VP_RENDER_CHK_NULL_RETURN(pAvsParams);
+
+    // Send SFC_FRAME_START command to start processing a frame
+    VP_RENDER_CHK_STATUS_RETURN(m_sfcItf->SetSfcSamplerTable(
+        pLumaTable,
+        pChromaTable,
+        pAvsParams,
+        SrcFormat,
+        fScaleX,
+        fScaleY,
+        dwChromaSiting,
+        bUse8x8Filter,
+        fHPStrength,
+        fLanczosT));
+
+    return eStatus;
 }
 }

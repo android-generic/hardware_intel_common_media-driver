@@ -930,13 +930,19 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
         bool isPlanar = false;
         isPlanar      = (pSurface->Format == Format_NV12) || (pSurface->Format == Format_P010) || (pSurface->Format == Format_P016);
 
-        if (isPlanar && pSurface->TileType != MOS_TILE_LINEAR)
+        VPHAL_DEBUG_CHK_NULL(pOsInterface);
+        VPHAL_DEBUG_CHK_NULL(pOsInterface->pfnGetSkuTable);
+        auto *skuTable = pOsInterface->pfnGetSkuTable(pOsInterface);
+
+        // RGBP and BGRP support tile output but should not transfer to linear surface due to height 16 align issue.
+        if ((skuTable && MEDIA_IS_SKU(skuTable, FtrE2ECompression) || isPlanar) &&
+            (pSurface->TileType != MOS_TILE_LINEAR) &&
+            !(pSurface->Format == Format_RGBP || pSurface->Format == Format_BGRP))
         {
             bool bAllocated;
 
             PVPHAL_SURFACE m_temp2DSurfForCopy = (PVPHAL_SURFACE)MOS_AllocAndZeroMemory(sizeof(VPHAL_SURFACE));
-
-            VPHAL_RENDER_CHK_STATUS(VpHal_ReAllocateSurface(
+            VPHAL_RENDER_CHK_STATUS(VpUtils::ReAllocateSurface(
                 pOsInterface,
                 m_temp2DSurfForCopy,
                 "Temp2DSurfForSurfDumper",
@@ -947,7 +953,10 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
                 pSurface->dwHeight,
                 false,
                 MOS_MMC_DISABLED,
-                &bAllocated));
+                &bAllocated,
+                MOS_HW_RESOURCE_DEF_MAX,
+                MOS_TILE_UNSET_GMM,
+                MOS_MEMPOOL_SYSTEMMEMORY));
 
             m_osInterface->pfnDoubleBufferCopyResource(
                 m_osInterface,
@@ -981,15 +990,11 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
         VPHAL_DEBUG_CHK_NULL(pData);
 
         // Write error to user feauture key
-        MOS_ZeroMemory(&UserFeatureWriteData, sizeof(UserFeatureWriteData));
-        UserFeatureWriteData.Value.u32Data  = 1;
-        UserFeatureWriteData.ValueID        = __VPHAL_DBG_SURF_DUMPER_RESOURCE_LOCK_ID;
-
-        eStatus = MOS_UserFeature_WriteValues_ID(
-            nullptr,
-            &UserFeatureWriteData,
+        eStatus = ReportUserSettingForDebug(
+            m_userSettingPtr,
+            __VPHAL_DBG_SURF_DUMPER_RESOURCE_LOCK,
             1,
-            m_osInterface->pOsContext);
+            MediaUserSetting::Group::Sequence);
 
         VPHAL_DEBUG_ASSERT(eStatus == MOS_STATUS_SUCCESS);
         isSurfaceLocked = true;
@@ -1003,7 +1008,7 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
         psPathPrefix,
         iCounter,
         pSurface->dwWidth,
-        pSurface->dwHeight,
+        planes[0].dwHeight,
         pSurface->dwPitch,
         VpDumperTool::GetFormatStr(pSurface->Format));
 
@@ -1097,7 +1102,7 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
 
                 VpDumperTool::GetOsFilePath(sPlanePath, sPlaneOsPath);
 
-                VPHAL_DEBUG_CHK_STATUS(MOS_WriteFileFromPtr(sPlaneOsPath, pDst + dstPlaneOffset[j], dstPlaneOffset[j + 1]));
+                VPHAL_DEBUG_CHK_STATUS(MosUtilities::MosWriteFileFromPtr(sPlaneOsPath, pDst + dstPlaneOffset[j], dstPlaneOffset[j + 1]));
             }
             else
             {
@@ -1106,7 +1111,7 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
         }
     }
 
-    VPHAL_DEBUG_CHK_STATUS(MOS_WriteFileFromPtr(sOsPath, pDst, dwSize));
+    VPHAL_DEBUG_CHK_STATUS(MosUtilities::MosWriteFileFromPtr(sOsPath, pDst, dwSize));
 
 #if !EMUL
     // Dump Aux surface data
@@ -1166,7 +1171,7 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
             auxDataY,
             auxSizeY);
 
-        VPHAL_DEBUG_CHK_STATUS(MOS_WriteFileFromPtr(sOsPath, pDstAux, auxSizeY));
+        VPHAL_DEBUG_CHK_STATUS(MosUtilities::MosWriteFileFromPtr(sOsPath, pDstAux, auxSizeY));
         MOS_SafeFreeMemory(pDstAux);
 
         if (auxSizeUV && isPlanar)
@@ -1194,7 +1199,7 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
                 auxDataUV,
                 auxSizeUV);
 
-            VPHAL_DEBUG_CHK_STATUS(MOS_WriteFileFromPtr(sOsPath, pDstUVAux, auxSizeUV));
+            VPHAL_DEBUG_CHK_STATUS(MosUtilities::MosWriteFileFromPtr(sOsPath, pDstUVAux, auxSizeUV));
             MOS_SafeFreeMemory(pDstUVAux);
         }
     }
@@ -1301,15 +1306,11 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
         VPHAL_DEBUG_CHK_NULL(pData);
 
         // Write error to user feauture key
-        MOS_ZeroMemory(&UserFeatureWriteData, sizeof(UserFeatureWriteData));
-        UserFeatureWriteData.Value.u32Data  = 1;
-        UserFeatureWriteData.ValueID        = __VPHAL_DBG_SURF_DUMPER_RESOURCE_LOCK_ID;
-
-        eStatus = MOS_UserFeature_WriteValues_ID(
-            nullptr,
-            &UserFeatureWriteData,
+        eStatus = ReportUserSettingForDebug(
+            m_userSettingPtr,
+            __VPHAL_DBG_SURF_DUMPER_RESOURCE_LOCK,
             1,
-            m_osInterface->pOsContext);
+            MediaUserSetting::Group::Sequence);
 
         VPHAL_DEBUG_ASSERT(eStatus == MOS_STATUS_SUCCESS);
         isSurfaceLocked = true;
@@ -1390,7 +1391,7 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
 
                 VpDumperTool::GetOsFilePath(sPlanePath, sPlaneOsPath);
 
-                VPHAL_DEBUG_CHK_STATUS(MOS_WriteFileFromPtr(sPlaneOsPath, pDst + dstPlaneOffset[j], dstPlaneOffset[j + 1]));
+                VPHAL_DEBUG_CHK_STATUS(MosUtilities::MosWriteFileFromPtr(sPlaneOsPath, pDst + dstPlaneOffset[j], dstPlaneOffset[j + 1]));
             }
             else
             {
@@ -1399,7 +1400,7 @@ MOS_STATUS VpSurfaceDumper::DumpSurfaceToFile(
         }
     }
 
-    VPHAL_DEBUG_CHK_STATUS(MOS_WriteFileFromPtr(sOsPath, pDst, dwSize));
+    VPHAL_DEBUG_CHK_STATUS(MosUtilities::MosWriteFileFromPtr(sOsPath, pDst, dwSize));
 
 finish:
     MOS_SafeFreeMemory(pDst);
@@ -1719,58 +1720,46 @@ void VpSurfaceDumper::GetSurfaceDumpSpec()
     VP_FUNC_CALL();
 
     MOS_STATUS                      eStatus = MOS_STATUS_SUCCESS;
-    MOS_USER_FEATURE_VALUE_DATA     UserFeatureData;
-    bool                            bDumpEnabled;
-    char                            cStringData[MOS_USER_CONTROL_MAX_DATA_SIZE];
     char                            pcDumpLocData[VPHAL_SURF_DUMP_MAX_DATA_LEN];
     VPHAL_SURF_DUMP_SPEC           *pDumpSpec = &m_dumpSpec;
+    MediaUserSetting::Value        outValue;
 
     pDumpSpec->uiStartFrame    = 0xFFFFFFFF;
     pDumpSpec->uiEndFrame      = 0;
     pDumpSpec->pcOutputPath[0] = '\0';
     pcDumpLocData[0]           = '\0';
-    bDumpEnabled               = false;
 
     // Get start frame
     // if start frame is not got assign a default value of 0
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_SURF_DUMP_START_FRAME_KEY_NAME_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-    pDumpSpec->uiStartFrame = UserFeatureData.u32Data;
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        pDumpSpec->uiStartFrame,
+        __VPHAL_DBG_SURF_DUMP_START_FRAME_KEY_NAME,
+        MediaUserSetting::Group::Sequence);
 
     // Get end frame
     // if end frame is not got assign a default value of max
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_SURF_DUMP_END_FRAME_KEY_NAME_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-    pDumpSpec->uiEndFrame = UserFeatureData.u32Data;
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        pDumpSpec->uiEndFrame,
+        __VPHAL_DBG_SURF_DUMP_END_FRAME_KEY_NAME,
+        MediaUserSetting::Group::Sequence);
 
     // Get out file path
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    UserFeatureData.StringData.pStringData = cStringData;
-    UserFeatureData.StringData.uMaxSize    = MOS_USER_CONTROL_MAX_DATA_SIZE;
-    UserFeatureData.StringData.uSize       = 0;    //set the default value. 0 is empty buffer.
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        outValue,
+        __VPHAL_DBG_SURF_DUMP_OUTFILE_KEY_NAME,
+        MediaUserSetting::Group::Sequence);
 
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_SURF_DUMP_OUTFILE_KEY_NAME_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-
-    if (UserFeatureData.StringData.uSize > 0)
+    if (outValue.ConstString().size() > 0 && outValue.ConstString().size() < MOS_USER_CONTROL_MAX_DATA_SIZE)
     {
         // Copy the Output path
         MOS_SecureMemcpy(
             pDumpSpec->pcOutputPath,
             MAX_PATH,
-            UserFeatureData.StringData.pStringData,
-            UserFeatureData.StringData.uSize);
+            outValue.ConstString().c_str(),
+            outValue.ConstString().size());
     }
 #if !defined(LINUX) && !defined(ANDROID)
     else
@@ -1781,7 +1770,6 @@ void VpSurfaceDumper::GetSurfaceDumpSpec()
         if (SUCCEEDED(GetDriverPersistentStorageLocation(vphalDumpFilePath)))
         {
             std::string m_outputFilePath;
-            MOS_USER_FEATURE_VALUE_WRITE_DATA userFeatureWriteData;
 
             m_outputFilePath = vphalDumpFilePath.c_str();
             m_outputFilePath.append(VPHAL_DUMP_OUTPUT_FOLDER);
@@ -1793,65 +1781,55 @@ void VpSurfaceDumper::GetSurfaceDumpSpec()
                 m_outputFilePath.c_str(),
                 m_outputFilePath.size());
 
-            MOS_ZeroMemory(&userFeatureWriteData, sizeof(userFeatureWriteData));
-            userFeatureWriteData.Value.StringData.pStringData = cStringData;
-            userFeatureWriteData.Value.StringData.pStringData = const_cast<char *>(m_outputFilePath.c_str());
-            userFeatureWriteData.Value.StringData.uSize       = m_outputFilePath.size();
-            userFeatureWriteData.ValueID                      = __VPHAL_DBG_DUMP_OUTPUT_DIRECTORY_ID;
-            MOS_UserFeature_WriteValues_ID(NULL, &userFeatureWriteData, 1, m_osInterface->pOsContext);
+            ReportUserSettingForDebug(m_userSettingPtr, __VPHAL_DBG_DUMP_OUTPUT_DIRECTORY, m_outputFilePath, MediaUserSetting::Group::Sequence);
         }
     }
 #endif
 
     // Get dump locations
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    UserFeatureData.StringData.pStringData = cStringData;
-    UserFeatureData.StringData.uMaxSize    = MOS_USER_CONTROL_MAX_DATA_SIZE;
-    UserFeatureData.StringData.uSize       = 0;    //set the default value. 0 is empty buffer.
-
-    MOS_CHK_STATUS_SAFE(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_SURF_DUMP_LOCATION_KEY_NAME_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-    if (UserFeatureData.StringData.uSize > 0)
+    outValue = "";
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        outValue,
+        __VPHAL_DBG_SURF_DUMP_LOCATION_KEY_NAME,
+        MediaUserSetting::Group::Sequence);
+    if (outValue.ConstString().size() > 0 && outValue.ConstString().size() < MOS_USER_CONTROL_MAX_DATA_SIZE
+        && pDumpSpec->pcOutputPath[0] != '\0')
     {
-        bDumpEnabled =  ((pDumpSpec->pcOutputPath[0] != '\0') &&
-                         (UserFeatureData.StringData.pStringData[0] != '\0'));
-    }
-
-    if (bDumpEnabled)
-    {
-        VPHAL_DEBUG_CHK_STATUS(ProcessDumpLocations(
-            UserFeatureData.StringData.pStringData));
+        VPHAL_DEBUG_CHK_STATUS(ProcessDumpLocations(const_cast<char *>(outValue.ConstString().c_str())));
     }
 
     // Get enableAuxDump
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_SURF_DUMP_ENABLE_AUX_DUMP_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-    pDumpSpec->enableAuxDump = UserFeatureData.u32Data;
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        pDumpSpec->enableAuxDump,
+        __VPHAL_DBG_SURF_DUMP_ENABLE_AUX_DUMP,
+        MediaUserSetting::Group::Sequence);
 
     // Get plane dump enabled flag
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        pDumpSpec->enablePlaneDump,
         __VPHAL_DBG_SURF_DUMPER_ENABLE_PLANE_DUMP,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-    pDumpSpec->enablePlaneDump = UserFeatureData.u32Data;
+        MediaUserSetting::Group::Sequence);
 
 finish:
-    if ((eStatus != MOS_STATUS_SUCCESS) || (!bDumpEnabled))
+    if ((eStatus != MOS_STATUS_SUCCESS) || (pDumpSpec->pcOutputPath[0] == '\0'))
     {
         pDumpSpec->uiStartFrame = 1;
         pDumpSpec->uiEndFrame   = 0;
     }
 }
 
+VpSurfaceDumper::VpSurfaceDumper(PMOS_INTERFACE pOsInterface) :
+    m_dumpSpec(),
+    m_osInterface(pOsInterface)
+{
+    if (m_osInterface)
+    {
+        m_userSettingPtr = m_osInterface->pfnGetUserSettingInstance(m_osInterface);
+    }
+}
 
 VpSurfaceDumper::~VpSurfaceDumper()
 {
@@ -1867,7 +1845,6 @@ MOS_STATUS VpSurfaceDumper::DumpSurface(
 {
     VP_FUNC_CALL();
 
-    MOS_USER_FEATURE_VALUE_DATA UserFeatureData;
     int32_t VphalSurfDumpManualTrigger = VPHAL_SURF_DUMP_MANUAL_TRIGGER_DEFAULT_NOT_SET;
 
     MOS_STATUS  eStatus;
@@ -1875,7 +1852,10 @@ MOS_STATUS VpSurfaceDumper::DumpSurface(
     VPHAL_SURF_DUMP_SPEC*      pDumpSpec = &m_dumpSpec;
     bool                       isDumpFromDecomp;
     bool                       orgDumpAuxEnable;
+    int32_t                    pid = MosUtilities::MosGetPid();
+    uint64_t                   timeStamp = 0;
 
+    MosUtilities::MosQueryPerformanceCounter(&timeStamp);
     eStatus = MOS_STATUS_SUCCESS;
     i       = 0;
     isDumpFromDecomp    = (Location == VPHAL_DUMP_TYPE_PRE_MEMDECOMP || Location == VPHAL_DUMP_TYPE_POST_MEMDECOMP);
@@ -1911,13 +1891,11 @@ MOS_STATUS VpSurfaceDumper::DumpSurface(
 
 
     // Get if manual triggered build
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_SURF_DUMP_MANUAL_TRIGGER_KEY_NAME_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext);
-    VphalSurfDumpManualTrigger = UserFeatureData.u32Data;
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        VphalSurfDumpManualTrigger,
+        __VPHAL_DBG_SURF_DUMP_MANUAL_TRIGGER_KEY_NAME,
+        MediaUserSetting::Group::Sequence);
 
     if (VphalSurfDumpManualTrigger != VPHAL_SURF_DUMP_MANUAL_TRIGGER_DEFAULT_NOT_SET)
     {
@@ -1944,13 +1922,13 @@ MOS_STATUS VpSurfaceDumper::DumpSurface(
 
                     if (!isDumpFromDecomp || (loc && loc[0] == 0))
                     {
-                        MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_loc[%s]_lyr[%d]", pDumpSpec->pcOutputPath, m_dumpLoc, uiCounter);
+                        MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_pid%x_ts%llx_loc[%s]_lyr[%d]", pDumpSpec->pcOutputPath, pid, timeStamp, m_dumpLoc, uiCounter);
                     }
                     else
                     {
                         if (loc)
                         {
-                            MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_loc[%s_%s]_lyr[%d]", pDumpSpec->pcOutputPath, loc, m_dumpLoc, uiCounter);
+                            MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_pid%x_ts%llx_loc[%s_%s]_lyr[%d]", pDumpSpec->pcOutputPath, pid, timeStamp, loc, m_dumpLoc, uiCounter);
                         }
                     }
                     DumpSurfaceToFile(
@@ -1996,15 +1974,15 @@ MOS_STATUS VpSurfaceDumper::DumpSurface(
 
                 if (!isDumpFromDecomp || (loc && loc[0] == 0))
                 {
-                    MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_loc[%s]_lyr[%d]",
-                        pDumpSpec->pcOutputPath, m_dumpLoc, uiCounter);
+                    MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_pid%x_ts%llx_loc_loc[%s]_lyr[%d]",
+                        pDumpSpec->pcOutputPath, pid, timeStamp, m_dumpLoc, uiCounter);
                 }
                 else
                 {
                     if (loc)
                     {
-                        MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_loc[%s_%s]_lyr[%d]",
-                            pDumpSpec->pcOutputPath, loc, m_dumpLoc, uiCounter);
+                        MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_pid%x_ts%llx_loc_loc[%s_%s]_lyr[%d]",
+                            pDumpSpec->pcOutputPath, pid, timeStamp, loc, m_dumpLoc, uiCounter);
                     }
                 }
 
@@ -2052,7 +2030,10 @@ MOS_STATUS VpSurfaceDumper::DumpSurface(
     VPHAL_SURF_DUMP_SPEC*      pDumpSpec = &m_dumpSpec;
     bool                       isDumpFromDecomp;
     bool                       orgDumpAuxEnable;
+    int32_t                    pid = MosUtilities::MosGetPid();
+    uint64_t                   timeStamp = 0;
 
+    MosUtilities::MosQueryPerformanceCounter(&timeStamp);
     eStatus = MOS_STATUS_SUCCESS;
     i       = 0;
     isDumpFromDecomp    = (Location == VPHAL_DUMP_TYPE_PRE_MEMDECOMP || Location == VPHAL_DUMP_TYPE_POST_MEMDECOMP);
@@ -2086,15 +2067,12 @@ MOS_STATUS VpSurfaceDumper::DumpSurface(
 
     }
 
-
     // Get if manual triggered build
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_SURF_DUMP_MANUAL_TRIGGER_KEY_NAME_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext);
-    VphalSurfDumpManualTrigger = UserFeatureData.u32Data;
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        VphalSurfDumpManualTrigger,
+        __VPHAL_DBG_SURF_DUMP_MANUAL_TRIGGER_KEY_NAME,
+        MediaUserSetting::Group::Sequence);
 
     if (VphalSurfDumpManualTrigger != VPHAL_SURF_DUMP_MANUAL_TRIGGER_DEFAULT_NOT_SET)
     {
@@ -2121,13 +2099,13 @@ MOS_STATUS VpSurfaceDumper::DumpSurface(
 
                     if (!isDumpFromDecomp || (loc && loc[0] == 0))
                     {
-                        MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_loc[%s]_lyr[%d]", pDumpSpec->pcOutputPath, m_dumpLoc, uiCounter);
+                        MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_pid%x_ts%llx_loc[%s]_lyr[%d]", pDumpSpec->pcOutputPath, pid, timeStamp, m_dumpLoc, uiCounter);
                     }
                     else
                     {
                         if (loc)
                         {
-                            MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_loc[%s_%s]_lyr[%d]", pDumpSpec->pcOutputPath, loc, m_dumpLoc, uiCounter);
+                            MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_pid%x_ts%llx_loc[%s_%s]_lyr[%d]", pDumpSpec->pcOutputPath, pid, timeStamp, loc, m_dumpLoc, uiCounter);
                         }
                     }
                     DumpSurfaceToFile(
@@ -2173,15 +2151,15 @@ MOS_STATUS VpSurfaceDumper::DumpSurface(
 
                 if (!isDumpFromDecomp || (loc && loc[0] == 0))
                 {
-                    MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_loc[%s]_lyr[%d]",
-                        pDumpSpec->pcOutputPath, m_dumpLoc, uiCounter);
+                    MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_pid%x_ts%llx_loc[%s]_lyr[%d]",
+                        pDumpSpec->pcOutputPath, pid, timeStamp, m_dumpLoc, uiCounter);
                 }
                 else
                 {
                     if (loc)
                     {
-                        MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_loc[%s_%s]_lyr[%d]",
-                            pDumpSpec->pcOutputPath, loc, m_dumpLoc, uiCounter);
+                        MOS_SecureStringPrint(m_dumpPrefix, MAX_PATH, MAX_PATH, "%s/surfdump_pid%x_ts%llx_loc[%s_%s]_lyr[%d]",
+                            pDumpSpec->pcOutputPath, pid, timeStamp, loc, m_dumpLoc, uiCounter);
                     }
                 }
 
@@ -2259,56 +2237,45 @@ void VpParameterDumper::GetParametersDumpSpec()
     VP_FUNC_CALL();
 
     MOS_STATUS                      eStatus = MOS_STATUS_SUCCESS;
-    MOS_USER_FEATURE_VALUE_DATA     UserFeatureData;
     bool                            bDumpEnabled;
-    char                            cStringData[MOS_USER_CONTROL_MAX_DATA_SIZE];
     VPHAL_PARAMS_DUMP_SPEC         *pDumpSpec = &m_dumpSpec;
+    MediaUserSetting::Value        outValue;
 
     pDumpSpec->uiStartFrame       = 0xFFFFFFFF;
     pDumpSpec->uiEndFrame         = 0;
     pDumpSpec->outFileLocation[0] = '\0';
-    cStringData[0]                = '\0';
     bDumpEnabled                  = false;
 
     // Get start frame
     // if start frame is not got assign a default value of 0
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_PARAM_DUMP_START_FRAME_KEY_NAME_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-    pDumpSpec->uiStartFrame = UserFeatureData.u32Data;
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        pDumpSpec->uiStartFrame,
+        __VPHAL_DBG_PARAM_DUMP_START_FRAME_KEY_NAME,
+        MediaUserSetting::Group::Sequence);
 
     // Get end frame
     // if end frame is not got assign a default value of max
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_PARAM_DUMP_END_FRAME_KEY_NAME_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-    pDumpSpec->uiEndFrame = UserFeatureData.u32Data;
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        pDumpSpec->uiEndFrame,
+        __VPHAL_DBG_PARAM_DUMP_END_FRAME_KEY_NAME,
+        MediaUserSetting::Group::Sequence);
 
     // Get out file path
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    UserFeatureData.StringData.pStringData = cStringData;
-    UserFeatureData.StringData.uMaxSize = MOS_USER_CONTROL_MAX_DATA_SIZE;
-    UserFeatureData.StringData.uSize = 0;    //set the default value. 0 is empty buffer.
-
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_PARAM_DUMP_OUTFILE_KEY_NAME_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-    if (UserFeatureData.StringData.uSize > 0)
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        outValue,
+        __VPHAL_DBG_PARAM_DUMP_OUTFILE_KEY_NAME,
+        MediaUserSetting::Group::Sequence);
+    if (outValue.ConstString().size() > 0 && outValue.ConstString().size() < MOS_USER_CONTROL_MAX_DATA_SIZE)
     {
         // Copy the Output path
         MOS_SecureMemcpy(
             pDumpSpec->outFileLocation,
             MAX_PATH,
-            UserFeatureData.StringData.pStringData,
-            UserFeatureData.StringData.uSize);
+            outValue.ConstString().c_str(),
+            outValue.ConstString().size());
         bDumpEnabled = true;
     }
 #if !defined(LINUX) && !defined(ANDROID)
@@ -2320,7 +2287,6 @@ void VpParameterDumper::GetParametersDumpSpec()
         if (SUCCEEDED(GetDriverPersistentStorageLocation(vphalDumpFilePath)))
         {
             std::string m_outputFilePath;
-            MOS_USER_FEATURE_VALUE_WRITE_DATA userFeatureWriteData;
 
             m_outputFilePath = vphalDumpFilePath.c_str();
             m_outputFilePath.append(VPHAL_DUMP_OUTPUT_FOLDER);
@@ -2332,12 +2298,7 @@ void VpParameterDumper::GetParametersDumpSpec()
                 m_outputFilePath.c_str(),
                 m_outputFilePath.size());
 
-            MOS_ZeroMemory(&userFeatureWriteData, sizeof(userFeatureWriteData));
-            userFeatureWriteData.Value.StringData.pStringData = cStringData;
-            userFeatureWriteData.Value.StringData.pStringData = const_cast<char *>(m_outputFilePath.c_str());
-            userFeatureWriteData.Value.StringData.uSize       = m_outputFilePath.size();
-            userFeatureWriteData.ValueID                      = __VPHAL_DBG_DUMP_OUTPUT_DIRECTORY_ID;
-            MOS_UserFeature_WriteValues_ID(NULL, &userFeatureWriteData, 1, m_osInterface->pOsContext);
+            ReportUserSettingForDebug(m_userSettingPtr, __VPHAL_DBG_DUMP_OUTPUT_DIRECTORY, m_outputFilePath, MediaUserSetting::Group::Sequence);
 
             bDumpEnabled = true;
         }
@@ -2345,13 +2306,11 @@ void VpParameterDumper::GetParametersDumpSpec()
 #endif
 
     // Get enableSkuWaDump
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_DBG_PARA_DUMP_ENABLE_SKUWA_DUMP_ID,
-        &UserFeatureData,
-        m_osInterface->pOsContext));
-    pDumpSpec->enableSkuWaDump = UserFeatureData.u32Data;
+    ReadUserSettingForDebug(
+        m_userSettingPtr,
+        pDumpSpec->enableSkuWaDump,
+        __VPHAL_DBG_PARA_DUMP_ENABLE_SKUWA_DUMP,
+        MediaUserSetting::Group::Sequence);
 
     if ((eStatus != MOS_STATUS_SUCCESS) || (!bDumpEnabled))
     {
@@ -2371,7 +2330,10 @@ MOS_STATUS VpParameterDumper::DumpSourceSurface(
 
     MOS_STATUS                      eStatus;
     char                            sSurfaceFilePath[MAX_PATH] = { 0 }, sOsSurfaceFilePath[MAX_PATH] = { 0 };
+    int32_t                         pid = MosUtilities::MosGetPid();
+    uint64_t                        timeStamp = 0;
 
+    MosUtilities::MosQueryPerformanceCounter(&timeStamp);
     eStatus               = MOS_STATUS_SUCCESS;
 
     //Color Information
@@ -2480,7 +2442,11 @@ MOS_STATUS VpParameterDumper::DumpSourceSurface(
             VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<ENABLE_CHROMA>%d</ENABLE_CHROMA>\n",     (pSrc->pDenoiseParams->bEnableChroma ? 1 : 0)));
             VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<AUTO_DETECT>%d</AUTO_DETECT>\n",         (pSrc->pDenoiseParams->bAutoDetect ? 1 : 0)));
             VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<DENOISE_FACTOR>%.3f</DENOISE_FACTOR>\n", (pSrc->pDenoiseParams->fDenoiseFactor)));
-            VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<NOISE_LEVEL>%s</NOISE_LEVEL>\n",    GetDenoiseModeStr(pSrc->pDenoiseParams->NoiseLevel)));
+            VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<NOISE_LEVEL>%s</NOISE_LEVEL>\n", GetDenoiseModeStr(pSrc->pDenoiseParams->NoiseLevel)));
+            VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<ENABLE_HVS_DENOISE>%d</ENABLE_HVS_DENOISE>\n", (pSrc->pDenoiseParams->bEnableHVSDenoise ? 1 : 0)));
+            VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<HVS_DENOISE_QP>%d</HVS_DENOISE_QP>\n", (pSrc->pDenoiseParams->HVSDenoise.QP)));
+            VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<HVS_DENOISE_STRENGTH>%d</HVS_DENOISE_STRENGTH>\n", (pSrc->pDenoiseParams->HVSDenoise.Strength)));
+            VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<HVS_DENOISE_MODE>%s</HVS_DENOISE_MODE>\n", GetHVSDenoiseModeStr(pSrc->pDenoiseParams->HVSDenoise.Mode)));
         }
         else
         {
@@ -2547,8 +2513,8 @@ MOS_STATUS VpParameterDumper::DumpSourceSurface(
             memset(sSurfaceFilePath, 0, MAX_PATH);
             memset(sOsSurfaceFilePath, 0, MAX_PATH);
 
-            MOS_SecureStringPrint(sSurfaceFilePath, MAX_PATH, MAX_PATH, "%s%csurfdump_loc[preALL]_lyr[%d]_f[%04d]_w[%d]_h[%d]_p[%d].%s",
-                pcOutputPath, MOS_DIR_SEPERATOR, index, uiFrameCounter, pSrc->dwWidth, pSrc->dwHeight, pSrc->dwPitch, VpDumperTool::GetFormatStr(pSrc->Format));
+            MOS_SecureStringPrint(sSurfaceFilePath, MAX_PATH, MAX_PATH, "%s%csurfdump_pid%x_ts%llx_loc[preALL]_lyr[%d]_f[%04d]_w[%d]_h[%d]_p[%d].%s",
+                pcOutputPath, MOS_DIR_SEPERATOR, pid, timeStamp, index, uiFrameCounter, pSrc->dwWidth, pSrc->dwHeight, pSrc->dwPitch, VpDumperTool::GetFormatStr(pSrc->Format));
             VpDumperTool::GetOsFilePath(sSurfaceFilePath, sOsSurfaceFilePath);
         }
         VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t\t\t<FILE>%s</FILE>\n", sOsSurfaceFilePath));
@@ -2665,7 +2631,10 @@ MOS_STATUS VpParameterDumper::DumpToXML(
     char*                           pCurFrameFileName;
     char*                           pBwdFrameFileName;
     VPHAL_PARAMS_DUMP_SPEC         *pParamsDumpSpec = &m_dumpSpec;
+    int32_t                         pid = MosUtilities::MosGetPid();
+    uint64_t                        timeStamp = 0;
 
+    MosUtilities::MosQueryPerformanceCounter(&timeStamp);
     eStatus               = MOS_STATUS_SUCCESS;
     dwStrLen              = 0;
     pcOutContents         = nullptr;
@@ -2685,7 +2654,7 @@ MOS_STATUS VpParameterDumper::DumpToXML(
     // Create the root element.
     VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "<VPHAL_SCENARIO>\n"));
     // General infomation
-    VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t<ID>%d</ID>\n", MOS_GetPid()));
+    VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t<ID>%d</ID>\n", MosUtilities::MosGetPid()));
 
     VPHAL_DEBUG_CHK_NULL(pRenderParams->pSrc[0]);
     VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t<DESCRIPTION>%d</DESCRIPTION>\n", pRenderParams->pSrc[0]->FrameID));
@@ -2733,11 +2702,11 @@ MOS_STATUS VpParameterDumper::DumpToXML(
     VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "\t</VPHAL_RENDER_PARAMS>\n"));
     VPHAL_DEBUG_CHK_STATUS(VpDumperTool::AppendString(false, &pcOutContents, "</VPHAL_SCENARIO>\n"));
 
-    MOS_SecureStringPrint(sPath, MAX_PATH, MAX_PATH, "%s%cparam_dump[%04d].xml", pParamsDumpSpec->outFileLocation, MOS_DIR_SEPERATOR, uiFrameCounter);
+    MOS_SecureStringPrint(sPath, MAX_PATH, MAX_PATH, "%s%cparam_dump_pid%x_ts%llx[%04d].xml", pParamsDumpSpec->outFileLocation, MOS_DIR_SEPERATOR, pid, timeStamp, uiFrameCounter);
 
     VpDumperTool::GetOsFilePath(sPath, sOsPath);
 
-    VPHAL_DEBUG_CHK_STATUS(MOS_WriteFileFromPtr(sOsPath, pcOutContents, strlen(pcOutContents)));
+    VPHAL_DEBUG_CHK_STATUS(MosUtilities::MosWriteFileFromPtr(sOsPath, pcOutContents, strlen(pcOutContents)));
 finish:
     if (pcOutContents)
     {
@@ -2745,6 +2714,16 @@ finish:
         pcOutContents = nullptr;
     }
     return eStatus;
+}
+
+VpParameterDumper::VpParameterDumper(PMOS_INTERFACE pOsInterface):
+    m_dumpSpec(),
+    m_osInterface(pOsInterface)
+{
+    if (m_osInterface)
+    {
+        m_userSettingPtr = m_osInterface->pfnGetUserSettingInstance(m_osInterface);
+    }
 }
 
 VpParameterDumper::~VpParameterDumper()
@@ -2764,7 +2743,7 @@ const char * VpDumperTool::GetFormatStr(MOS_FORMAT format)
         case Format_A16R16G16B16: return _T("argb16");
         case Format_A16B16G16R16: return _T("abgr16");
         case Format_R5G6B5      : return _T("rgb16");
-        case Format_R8G8B8      : return _T("rgb24");
+        case Format_R8G8B8      : return _T("rgb");
         case Format_R32U        : return _T("r32u");
         case Format_RGBP        : return _T("rgbp");
         case Format_BGRP        : return _T("bgrp");
@@ -3213,7 +3192,7 @@ MOS_STATUS VpDumperTool::AppendString(
     }
 
     va_start(argList, pcToAppendFmt);
-    MOS_SecureVStringPrint(pcToAppend, ALLOC_GRANULARITY, ALLOC_GRANULARITY, pcToAppendFmt, argList);
+    MosUtilities::MosSecureVStringPrint(pcToAppend, ALLOC_GRANULARITY, ALLOC_GRANULARITY, pcToAppendFmt, argList);
     va_end(argList);
 
     stStrLenToAppend = strlen(pcToAppend);
@@ -3321,7 +3300,7 @@ void VpDumperTool::WriteFrame(
     // Write the data to file
     if (pSurface->dwPitch == iWidthInBytes)
     {
-        MOS_WriteFileFromPtr((const char *)sOsPath, pData, iSize);
+        MosUtilities::MosWriteFileFromPtr((const char *)sOsPath, pData, iSize);
     }
     else
     {
@@ -3336,7 +3315,7 @@ void VpDumperTool::WriteFrame(
             pTmpDst += iWidthInBytes;
         }
 
-        MOS_WriteFileFromPtr((const char *)sOsPath, pDst, iSize);
+        MosUtilities::MosWriteFileFromPtr((const char *)sOsPath, pDst, iSize);
     }
 
     if (pDst)
@@ -3666,6 +3645,23 @@ const char * VpParameterDumper::GetDenoiseModeStr(VPHAL_NOISELEVEL noise_level)
     case NOISELEVEL_DEFAULT:         return _T("NOISELEVEL_DEFAULT");
     case NOISELEVEL_VC1_HD:          return _T("NOISELEVEL_VC1_HD");
     default:                         return _T("Err");
+    }
+
+    return nullptr;
+}
+
+const char *VpParameterDumper::GetHVSDenoiseModeStr(VPHAL_HVSDN_MODE hvs_dn_mode)
+{
+    switch (hvs_dn_mode)
+    {
+    case HVSDENOISE_AUTO_BDRATE:
+        return _T("HVSDENOISE_AUTO_BDRATE");
+    case HVSDENOISE_AUTO_SUBJECTIVE:
+        return _T("HVSDENOISE_AUTO_SUBJECTIVE");
+    case HVSDENOISE_MANUAL:
+        return _T("HVSDENOISE_MANUAL");
+    default:
+        return _T("Err");
     }
 
     return nullptr;

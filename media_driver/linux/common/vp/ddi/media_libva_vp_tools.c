@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2017, Intel Corporation
+* Copyright (c) 2009-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -477,7 +477,7 @@ VAStatus VpDumpProcPipelineParams(
             int32_t tmp = strnlen(env_value, sizeof(env_value));
             int32_t left = sizeof(env_value) - tmp;
             snprintf(env_value+tmp, left, "%ld", suffix);
-            MOS_SecureFileOpen(&pVpCtx->fpDumpFile, env_value, "w");
+            MosUtilities::MosSecureFileOpen(&pVpCtx->fpDumpFile, env_value, "w");
         }
     }
     fpLog = pVpCtx->fpDumpFile;
@@ -629,6 +629,7 @@ void VpConfigValuesInit(
     pConfigValues->dwRTCompressModeReported   = LIBVA_VP_CONFIG_NOT_REPORTED;
     pConfigValues->dwCapturePipeInUseReported = LIBVA_VP_CONFIG_NOT_REPORTED;
     pConfigValues->dwReportedCompositionMode  = LIBVA_VP_CONFIG_NOT_REPORTED;
+    pConfigValues->dwReportedHdrMode          = LIBVA_VP_CONFIG_NOT_REPORTED;
 
     pConfigValues->dwFFDICompressibleReported    = LIBVA_VP_CONFIG_NOT_REPORTED;
     pConfigValues->dwFFDICompressModeReported    = LIBVA_VP_CONFIG_NOT_REPORTED;
@@ -645,21 +646,36 @@ void VpConfigValuesInit(
 void VpFeatureReport(
     PVP_CONFIG         pConfig)
 {
-    WriteUserFeature(__VPHAL_VEBOX_OUTPUTPIPE_MODE_ID,         pConfig->dwCurrentOutputPipeMode, nullptr);
-    WriteUserFeature(__VPHAL_VEBOX_FEATURE_INUSE_ID,           pConfig->dwCurrentVEFeatureInUse, nullptr);
+    ReportUserSetting(
+        nullptr,
+        __VPHAL_VEBOX_OUTPUTPIPE_MODE,
+        pConfig->dwCurrentOutputPipeMode,
+        MediaUserSetting::Group::Sequence);
+
+    ReportUserSetting(
+        nullptr,
+        __VPHAL_VEBOX_FEATURE_INUSE,
+        pConfig->dwCurrentVEFeatureInUse,
+        MediaUserSetting::Group::Sequence);
 
 #if (_DEBUG || _RELEASE_INTERNAL)
+    ReportUserSettingForDebug(
+        nullptr,
+        __VPHAL_VEBOX_HDR_MODE,
+        pConfig->dwCurrentHdrMode,
+        MediaUserSetting::Group::Sequence);
+
 #ifdef _MMC_SUPPORTED
     //VP MMC In Use
-    WriteUserFeature(__VPHAL_ENABLE_MMC_IN_USE_ID,             pConfig->dwVPMMCInUse, nullptr);
+    WriteUserFeature(__VPHAL_ENABLE_MMC_IN_USE_ID,             pConfig->dwVPMMCInUse, (MOS_CONTEXT_HANDLE)nullptr);
     //VP Primary Surface Compress Mode Report
-    WriteUserFeature(__VPHAL_PRIMARY_SURFACE_COMPRESS_MODE_ID, pConfig->dwPrimaryCompressMode, nullptr);
+    WriteUserFeature(__VPHAL_PRIMARY_SURFACE_COMPRESS_MODE_ID, pConfig->dwPrimaryCompressMode, (MOS_CONTEXT_HANDLE)nullptr);
     //VP Primary Surface Compressible
-    WriteUserFeature(__VPHAL_PRIMARY_SURFACE_COMPRESSIBLE_ID,  pConfig->dwPrimaryCompressible, nullptr);
+    WriteUserFeature(__VPHAL_PRIMARY_SURFACE_COMPRESSIBLE_ID,  pConfig->dwPrimaryCompressible, (MOS_CONTEXT_HANDLE)nullptr);
     //VP RT Compress Mode
-    WriteUserFeature(__VPHAL_RT_COMPRESS_MODE_ID,              pConfig->dwRTCompressMode, nullptr);
+    WriteUserFeature(__VPHAL_RT_COMPRESS_MODE_ID,              pConfig->dwRTCompressMode, (MOS_CONTEXT_HANDLE)nullptr);
     //VP RT Compressible
-    WriteUserFeature(__VPHAL_RT_COMPRESSIBLE_ID,               pConfig->dwRTCompressible, nullptr);
+    WriteUserFeature(__VPHAL_RT_COMPRESSIBLE_ID,               pConfig->dwRTCompressible, (MOS_CONTEXT_HANDLE)nullptr);
 #endif
 #endif //(_DEBUG || _RELEASE_INTERNAL)
 }

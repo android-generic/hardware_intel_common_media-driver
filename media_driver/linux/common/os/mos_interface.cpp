@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2021, Intel Corporation
+* Copyright (c) 2009-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -34,10 +34,18 @@
 #include "mos_os_virtualengine_scalability_specific_next.h"
 #include "mos_graphicsresource_specific_next.h"
 #include "mos_bufmgr_priv.h"
+#include "drm_device.h"
+#include "media_fourcc.h"
 
 #if (_DEBUG || _RELEASE_INTERNAL)
 #include <stdlib.h>   //for simulate random OS API failure
 #include <time.h>     //for simulate random OS API failure
+#endif
+
+#if MOS_COMMAND_BUFFER_DUMP_SUPPORTED
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 #endif
 
 MOS_STATUS MosInterface::InitOsUtilities(DDI_DEVICE_CONTEXT ddiDeviceContext)
@@ -54,7 +62,6 @@ MOS_STATUS MosInterface::InitOsUtilities(DDI_DEVICE_CONTEXT ddiDeviceContext)
 #endif
 
     //Read user feature key here for Per Utility Tool Enabling
-#if _RELEASE_INTERNAL
     if (!g_perfutility->bPerfUtilityKey)
     {
         MOS_USER_FEATURE_VALUE_DATA UserFeatureData;
@@ -88,7 +95,7 @@ MOS_STATUS MosInterface::InitOsUtilities(DDI_DEVICE_CONTEXT ddiDeviceContext)
 
         g_perfutility->bPerfUtilityKey = true;
     }
-#endif
+
     return MOS_STATUS_SUCCESS;
 }
 
@@ -239,7 +246,7 @@ MOS_STATUS MosInterface::CreateOsStreamState(
         NULL,
         __MEDIA_USER_FEATURE_VALUE_ENABLE_GUC_SUBMISSION_ID,
         &userFeatureData,
-    nullptr);
+        (MOS_CONTEXT_HANDLE) nullptr);
     (*streamState)->bGucSubmission = (*streamState)->bGucSubmission && ((uint32_t)userFeatureData.i32Data);
 
     //KMD Virtual Engine DebugOverride
@@ -368,17 +375,9 @@ MOS_STATUS MosInterface::InitStreamParameters(
     context->m_osDeviceContext  = streamState->osDeviceContext;
     context->bSimIsActive       = streamState->simIsActive;
 
-    if (GMM_SUCCESS != OpenGmm(&context->GmmFuncs))
-    {
-        MOS_FreeMemAndSetNull(context);
-
-        MOS_OS_ASSERTMESSAGE("Unable to open gmm");
-        return MOS_STATUS_INVALID_PARAMETER;
-    }
-
     streamState->perStreamParameters = (OS_PER_STREAM_PARAMETERS)context;
 
-    context->pGmmClientContext  = context->GmmFuncs.pfnCreateClientContext((GMM_CLIENT)GMM_LIBVA_LINUX);
+    context->pGmmClientContext  = streamState->osDeviceContext->GetGmmClientContext();;
 
     context->bufmgr             = bufMgr;
     context->m_gpuContextMgr    = osDeviceContext->GetGpuContextMgr();
@@ -609,6 +608,28 @@ MOS_STATUS MosInterface::CreateGpuContext(
     return MOS_STATUS_SUCCESS;
 }
 
+MOS_STATUS MosInterface::GetAdapterBDF(PMOS_CONTEXT mosCtx, ADAPTER_BDF *adapterBDF)
+{
+    MOS_OS_FUNCTION_ENTER;
+
+    drmDevicePtr device;
+    
+    MOS_OS_CHK_NULL_RETURN(mosCtx);
+    if (drmGetDevice(mosCtx->fd, &device) == 0)
+    {
+        adapterBDF->Bus      = device->businfo.pci->bus;
+        adapterBDF->Device   = device->businfo.pci->dev;
+        adapterBDF->Function = device->businfo.pci->func;
+        drmFreeDevice(&device);
+    }
+    else
+    {
+        adapterBDF->Data = 0;
+    }
+
+    return MOS_STATUS_SUCCESS;
+}
+
 MOS_STATUS MosInterface::DestroyGpuContext(
     MOS_STREAM_HANDLE  streamState,
     GPU_CONTEXT_HANDLE gpuContext)
@@ -733,6 +754,56 @@ MOS_STATUS MosInterface::AddCommand(
 }
 
 #if MOS_COMMAND_BUFFER_DUMP_SUPPORTED
+MOS_STATUS MosInterface::DumpIndirectState(
+    MOS_STREAM_HANDLE     streamState,
+    COMMAND_BUFFER_HANDLE cmdBuffer,
+    MOS_GPU_NODE          gpuNode,
+    const char            *filePathPrefix)
+{
+    MOS_OS_CHK_NULL_RETURN(filePathPrefix);
+
+    if (MOS_GPU_NODE_COMPUTE == gpuNode || MOS_GPU_NODE_3D == gpuNode)
+    {
+        uint8_t *indirectState = nullptr;
+        uint32_t offset = 0;
+        uint32_t size = 0;
+        MosInterface::GetIndirectState(streamState, &indirectState, offset, size);
+
+        if (indirectState)
+        {
+            std::stringstream ss;
+            uint32_t dwordCount = size / 4;
+            uint32_t *data = (uint32_t *)indirectState;
+
+            for (uint32_t i = 0; i < dwordCount; ++i)
+            {
+                if (0 == i % 4)
+                {
+                    if (0 != i)
+                    {
+                        ss << std::endl;
+                    }
+                    ss << "#0    #0";
+                }
+                ss << "    " << std::hex << std::setw(8) << std::setfill('0') << data[i];
+            }
+
+            std::stringstream fileName;
+            fileName << filePathPrefix << "_binding_table.txt";
+            std::fstream fs;
+            fs.open(fileName.str(), std::ios_base::out | std::ios_base::app);
+            fs << ss.str();
+            fs.close();
+        }
+        else
+        {
+            MOS_OS_NORMALMESSAGE("nullptr == indirectState");
+        }
+    }
+
+    return MOS_STATUS_SUCCESS;
+}
+
 MOS_STATUS MosInterface::DumpCommandBuffer(
     MOS_STREAM_HANDLE     streamState,
     COMMAND_BUFFER_HANDLE cmdBuffer)
@@ -854,6 +925,7 @@ MOS_STATUS MosInterface::DumpCommandBuffer(
     if (streamState->dumpCommandBufferToFile)
     {
         MOS_OS_CHK_STATUS_RETURN(MosUtilities::MosAppendFileFromPtr((const char *)sFileName, pOutputBuffer, dwBytesWritten));
+        MOS_OS_CHK_STATUS_RETURN(DumpIndirectState(streamState, cmdBuffer, gpuNode, sFileName));
     }
 
     if (streamState->dumpCommandBufferAsMessages)
@@ -1464,6 +1536,12 @@ MOS_STATUS MosInterface::ConvertResourceFromDdi(
         case Media_Format_A16B16G16R16:
             resource->Format = Format_A16B16G16R16;
             break;
+        case Media_Format_I420:
+            resource->Format = Format_I420;
+            break;
+        case Media_Format_YV12:
+            resource->Format = Format_YV12;
+            break;
         default:
             MOS_OS_ASSERTMESSAGE("MOS: unsupported media format for surface.");
             break;
@@ -1712,7 +1790,7 @@ MOS_STATUS MosInterface::GetResourceInfo(
     GMM_RESOURCE_FLAG   gmmFlags = {};
     MOS_STATUS          eStatus = MOS_STATUS_SUCCESS;
 
-    MOS_OS_CHK_NULL_RETURN(streamState);
+    MOS_UNUSED(streamState);
     MOS_OS_CHK_NULL_RETURN(resource);
 
     // Get Gmm resource info
@@ -1972,6 +2050,21 @@ uint64_t MosInterface::GetResourceGfxAddress(
     return resource->bo->offset64;
 }
 
+uint32_t MosInterface::GetResourceAllocationHandle(
+    MOS_RESOURCE_HANDLE resource)
+{
+    MOS_OS_FUNCTION_ENTER;
+
+    if (resource && resource->bo)
+    {
+        return resource->bo->handle;
+    }
+    else
+    {
+        return 0;
+    }
+}
+
 uint32_t MosInterface::GetResourceAllocationIndex(
     MOS_STREAM_HANDLE   streamState,
     MOS_RESOURCE_HANDLE resource)
@@ -2031,6 +2124,17 @@ MOS_STATUS MosInterface::LockSyncCallback(
     MOS_OS_FUNCTION_ENTER;
 
     // No need to do Lock sync
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS MosInterface::WaitForCmdCompletion(
+    MOS_STREAM_HANDLE  streamState,
+    GPU_CONTEXT_HANDLE gpuCtx)
+{
+    MOS_OS_FUNCTION_ENTER;
+
+    // No need to do WaitForCmdCompletion
 
     return MOS_STATUS_SUCCESS;
 }
@@ -2316,7 +2420,12 @@ MOS_STATUS MosInterface::DecompResource(
     MOS_OS_CHK_NULL_RETURN(resource->pGmmResInfo);
 
     MOS_LINUX_BO *bo = resource->bo;
-    if (resource->pGmmResInfo->IsMediaMemoryCompressed(0))
+    GMM_RESOURCE_FLAG gmmFlags;
+    gmmFlags = resource->pGmmResInfo->GetResFlags();
+    if (((gmmFlags.Gpu.MMC ||
+        gmmFlags.Gpu.CCS) &&
+        gmmFlags.Gpu.UnifiedAuxSurface) ||
+        resource->pGmmResInfo->IsMediaMemoryCompressed(0))
     {
         OsContextNext *osCtx = streamState->osDeviceContext;
         MOS_OS_CHK_NULL_RETURN(osCtx);
@@ -2327,6 +2436,13 @@ MOS_STATUS MosInterface::DecompResource(
         mosDecompression->MemoryDecompress(resource);
     }
 
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS MosInterface::SetDecompSyncRes(
+    MOS_STREAM_HANDLE   streamState,
+    MOS_RESOURCE_HANDLE syncResource)
+{
     return MOS_STATUS_SUCCESS;
 }
 
@@ -2879,6 +2995,24 @@ PMOS_RESOURCE MosInterface::GetMarkerResource(
     return nullptr;
 }
 
+int MosInterface::GetPlaneSurfaceOffset(const MOS_PLANE_OFFSET &planeOffset)
+{
+    return planeOffset.iSurfaceOffset;
+}
+
+uint32_t MosInterface::GetResourceArrayIndex(
+    PMOS_RESOURCE resource)
+{
+    return 0;
+}
+
+MediaUserSettingSharedPtr MosInterface::MosGetUserSettingInstance(
+    MOS_STREAM_HANDLE streamState)
+{
+
+    return nullptr;
+}
+
 #if MOS_COMMAND_BUFFER_DUMP_SUPPORTED
 MOS_STATUS MosInterface::DumpCommandBufferInit(
     MOS_STREAM_HANDLE streamState)
@@ -2888,6 +3022,7 @@ MOS_STATUS MosInterface::DumpCommandBufferInit(
     MOS_USER_FEATURE_VALUE_DATA UserFeatureData = {0};
     char *psFileNameAfterPrefix = nullptr;
     size_t nSizeFileNamePrefix = 0;
+    MediaUserSettingSharedPtr   userSettingPtr  = MosInterface::MosGetUserSettingInstance(streamState);
 
     MOS_OS_CHK_NULL_RETURN(streamState);
 
@@ -2896,7 +3031,7 @@ MOS_STATUS MosInterface::DumpCommandBufferInit(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_DUMP_COMMAND_BUFFER_ENABLE_ID,
         &UserFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)streamState->perStreamParameters);
     streamState->dumpCommandBuffer            = (UserFeatureData.i32Data != 0);
     streamState->dumpCommandBufferToFile      = ((UserFeatureData.i32Data & 1) != 0);
     streamState->dumpCommandBufferAsMessages  = ((UserFeatureData.i32Data & 2) != 0);
@@ -2904,7 +3039,7 @@ MOS_STATUS MosInterface::DumpCommandBufferInit(
     if (streamState->dumpCommandBufferToFile)
     {
         // Create output directory.
-        eStatus = MosUtilDebug::MosLogFileNamePrefix(streamState->sDirName, nullptr);
+        eStatus = MosUtilDebug::MosLogFileNamePrefix(streamState->sDirName, userSettingPtr);
         if (eStatus != MOS_STATUS_SUCCESS)
         {
             MOS_OS_NORMALMESSAGE("Failed to create log file prefix. Status = %d", eStatus);
@@ -3104,6 +3239,206 @@ bool MosInterface::MosSimulateOsApiFail(
 #endif  // #if (_DEBUG || _RELEASE_INTERNAL)
 
 bool MosInterface::IsAsyncDevice(MOS_STREAM_HANDLE streamState)
+{
+    return false;
+}
+
+GMM_RESOURCE_FORMAT MosInterface::MosFmtToGmmFmt(MOS_FORMAT format)
+{
+    static const std::map<MOS_FORMAT, GMM_RESOURCE_FORMAT> mos2GmmFmtMap = {
+        {Format_Buffer, GMM_FORMAT_GENERIC_8BIT},
+        {Format_Buffer_2D, GMM_FORMAT_GENERIC_8BIT},
+        {Format_L8, GMM_FORMAT_GENERIC_8BIT},
+        {Format_L16, GMM_FORMAT_L16_UNORM_TYPE},
+        {Format_STMM, GMM_FORMAT_R8_UNORM_TYPE},
+        {Format_AI44, GMM_FORMAT_GENERIC_8BIT},
+        {Format_IA44, GMM_FORMAT_GENERIC_8BIT},
+        {Format_R5G6B5, GMM_FORMAT_B5G6R5_UNORM_TYPE},
+        {Format_X8R8G8B8, GMM_FORMAT_B8G8R8X8_UNORM_TYPE},
+        {Format_A8R8G8B8, GMM_FORMAT_B8G8R8A8_UNORM_TYPE},
+        {Format_X8B8G8R8, GMM_FORMAT_R8G8B8X8_UNORM_TYPE},
+        {Format_A8B8G8R8, GMM_FORMAT_R8G8B8A8_UNORM_TYPE},
+        {Format_R32F, GMM_FORMAT_R32_FLOAT_TYPE},
+        {Format_V8U8, GMM_FORMAT_GENERIC_16BIT},  // matching size as format
+        {Format_YUY2, GMM_FORMAT_YUY2},
+        {Format_UYVY, GMM_FORMAT_UYVY},
+        {Format_P8, GMM_FORMAT_RENDER_8BIT_TYPE},  // matching size as format
+        {Format_A8, GMM_FORMAT_A8_UNORM_TYPE},
+        {Format_AYUV, GMM_FORMAT_R8G8B8A8_UINT_TYPE},
+        {Format_NV12, GMM_FORMAT_NV12_TYPE},
+        {Format_NV21, GMM_FORMAT_NV21_TYPE},
+        {Format_YV12, GMM_FORMAT_YV12_TYPE},
+        {Format_R32U, GMM_FORMAT_R32_UINT_TYPE},
+        {Format_R32S, GMM_FORMAT_R32_SINT_TYPE},
+        {Format_RAW, GMM_FORMAT_GENERIC_8BIT},
+        {Format_444P, GMM_FORMAT_MFX_JPEG_YUV444_TYPE},
+        {Format_422H, GMM_FORMAT_MFX_JPEG_YUV422H_TYPE},
+        {Format_422V, GMM_FORMAT_MFX_JPEG_YUV422V_TYPE},
+        {Format_IMC3, GMM_FORMAT_IMC3_TYPE},
+        {Format_411P, GMM_FORMAT_MFX_JPEG_YUV411_TYPE},
+        {Format_411R, GMM_FORMAT_MFX_JPEG_YUV411R_TYPE},
+        {Format_RGBP, GMM_FORMAT_RGBP_TYPE},
+        {Format_BGRP, GMM_FORMAT_BGRP_TYPE},
+        {Format_R8U, GMM_FORMAT_R8_UINT_TYPE},
+        {Format_R8UN, GMM_FORMAT_R8_UNORM},
+        {Format_R16U, GMM_FORMAT_R16_UINT_TYPE},
+        {Format_R16F, GMM_FORMAT_R16_FLOAT_TYPE},
+        {Format_P010, GMM_FORMAT_P010_TYPE},
+        {Format_P016, GMM_FORMAT_P016_TYPE},
+        {Format_Y216, GMM_FORMAT_Y216_TYPE},
+        {Format_Y416, GMM_FORMAT_Y416_TYPE},
+        {Format_P208, GMM_FORMAT_P208_TYPE},
+        {Format_A16B16G16R16, GMM_FORMAT_R16G16B16A16_UNORM_TYPE},
+        {Format_Y210, GMM_FORMAT_Y210_TYPE},
+        {Format_Y410, GMM_FORMAT_Y410_TYPE},
+        {Format_R10G10B10A2, GMM_FORMAT_R10G10B10A2_UNORM_TYPE},
+        {Format_A16B16G16R16F, GMM_FORMAT_R16G16B16A16_FLOAT},
+        {Format_R32G32B32A32F, GMM_FORMAT_R32G32B32A32_FLOAT}
+    };
+    
+    auto iter = mos2GmmFmtMap.find(format);
+    if (iter != mos2GmmFmtMap.end())
+    {
+        return iter->second;
+    }
+    return GMM_FORMAT_INVALID;
+
+}
+
+uint32_t MosInterface::MosFmtToOsFmt(MOS_FORMAT format)
+{
+    static const std::map<MOS_FORMAT, MOS_OS_FORMAT> mos2OsFmtMap = {
+        {Format_A8R8G8B8,   (MOS_OS_FORMAT)DDI_FORMAT_A8R8G8B8},
+        {Format_X8R8G8B8,   (MOS_OS_FORMAT)DDI_FORMAT_X8R8G8B8},
+        {Format_A8B8G8R8,   (MOS_OS_FORMAT)DDI_FORMAT_A8B8G8R8},
+        {Format_R32U,       (MOS_OS_FORMAT)DDI_FORMAT_R32F},
+        {Format_R32F,       (MOS_OS_FORMAT)DDI_FORMAT_R32F},
+        {Format_R5G6B5,     (MOS_OS_FORMAT)DDI_FORMAT_R5G6B5},
+        {Format_YUY2,       (MOS_OS_FORMAT)DDI_FORMAT_YUY2},
+        {Format_P8,         (MOS_OS_FORMAT)DDI_FORMAT_P8},
+        {Format_A8P8,       (MOS_OS_FORMAT)DDI_FORMAT_A8P8},
+        {Format_A8,         (MOS_OS_FORMAT)DDI_FORMAT_A8},
+        {Format_L8,         (MOS_OS_FORMAT)DDI_FORMAT_L8},
+        {Format_L16,        (MOS_OS_FORMAT)DDI_FORMAT_L16},
+        {Format_A4L4,       (MOS_OS_FORMAT)DDI_FORMAT_A4L4},
+        {Format_A8L8,       (MOS_OS_FORMAT)DDI_FORMAT_A8L8},
+        {Format_V8U8,       (MOS_OS_FORMAT)DDI_FORMAT_V8U8},
+        {Format_YVYU,       (MOS_OS_FORMAT)FOURCC_YVYU},
+        {Format_UYVY,       (MOS_OS_FORMAT)FOURCC_UYVY},
+        {Format_VYUY,       (MOS_OS_FORMAT)FOURCC_VYUY},
+        {Format_AYUV,       (MOS_OS_FORMAT)FOURCC_AYUV},
+        {Format_NV12,       (MOS_OS_FORMAT)FOURCC_NV12},
+        {Format_NV21,       (MOS_OS_FORMAT)FOURCC_NV21},
+        {Format_NV11,       (MOS_OS_FORMAT)FOURCC_NV11},
+        {Format_P208,       (MOS_OS_FORMAT)FOURCC_P208},
+        {Format_IMC1,       (MOS_OS_FORMAT)FOURCC_IMC1},
+        {Format_IMC2,       (MOS_OS_FORMAT)FOURCC_IMC2},
+        {Format_IMC3,       (MOS_OS_FORMAT)FOURCC_IMC3},
+        {Format_IMC4,       (MOS_OS_FORMAT)FOURCC_IMC4},
+        {Format_I420,       (MOS_OS_FORMAT)FOURCC_I420},
+        {Format_IYUV,       (MOS_OS_FORMAT)FOURCC_IYUV},
+        {Format_YV12,       (MOS_OS_FORMAT)FOURCC_YV12},
+        {Format_YVU9,       (MOS_OS_FORMAT)FOURCC_YVU9},
+        {Format_AI44,       (MOS_OS_FORMAT)FOURCC_AI44},
+        {Format_IA44,       (MOS_OS_FORMAT)FOURCC_IA44},
+        {Format_400P,       (MOS_OS_FORMAT)FOURCC_400P},
+        {Format_411P,       (MOS_OS_FORMAT)FOURCC_411P},
+        {Format_411R,       (MOS_OS_FORMAT)FOURCC_411R},
+        {Format_422H,       (MOS_OS_FORMAT)FOURCC_422H},
+        {Format_422V,       (MOS_OS_FORMAT)FOURCC_422V},
+        {Format_444P,       (MOS_OS_FORMAT)FOURCC_444P},
+        {Format_RGBP,       (MOS_OS_FORMAT)FOURCC_RGBP},
+        {Format_BGRP,       (MOS_OS_FORMAT)FOURCC_BGRP},
+        {Format_STMM,       (MOS_OS_FORMAT)DDI_FORMAT_P8},
+        {Format_P010,       (MOS_OS_FORMAT)FOURCC_P010},
+        {Format_P016,       (MOS_OS_FORMAT)FOURCC_P016},
+        {Format_Y216,       (MOS_OS_FORMAT)FOURCC_Y216},
+        {Format_Y416,       (MOS_OS_FORMAT)FOURCC_Y416},
+        {Format_A16B16G16R16, (MOS_OS_FORMAT)DDI_FORMAT_A16B16G16R16},
+        {Format_Y210,       (MOS_OS_FORMAT)FOURCC_Y210},
+        {Format_Y410,       (MOS_OS_FORMAT)FOURCC_Y410},
+        {Format_R32G32B32A32F, (MOS_OS_FORMAT)DDI_FORMAT_R32G32B32A32F}};
+
+    auto iter = mos2OsFmtMap.find(format);
+    if (iter != mos2OsFmtMap.end())
+    {
+        return iter->second;
+    }
+    return (MOS_OS_FORMAT)DDI_FORMAT_UNKNOWN;
+}
+
+MOS_FORMAT MosInterface::OsFmtToMosFmt(uint32_t format)
+{
+    static const std::map<MOS_OS_FORMAT, MOS_FORMAT> os2MosFmtMap = {
+        {DDI_FORMAT_A8B8G8R8,       Format_A8R8G8B8},
+        {DDI_FORMAT_X8B8G8R8,       Format_X8R8G8B8},
+        {DDI_FORMAT_R32F,           Format_R32F},
+        {DDI_FORMAT_A8R8G8B8,       Format_A8R8G8B8},
+        {DDI_FORMAT_X8R8G8B8,       Format_X8R8G8B8},
+        {DDI_FORMAT_R5G6B5,         Format_R5G6B5},
+        {DDI_FORMAT_YUY2,           Format_YUY2},
+        {DDI_FORMAT_P8,             Format_P8},
+        {DDI_FORMAT_A8P8,           Format_A8P8},
+        {DDI_FORMAT_A8,             Format_A8},
+        {DDI_FORMAT_L8,             Format_L8},
+        {DDI_FORMAT_L16,            Format_L16},
+        {DDI_FORMAT_A4L4,           Format_A4L4},
+        {DDI_FORMAT_A8L8,           Format_A8L8},
+        {DDI_FORMAT_V8U8,           Format_V8U8},
+        {DDI_FORMAT_A16B16G16R16,   Format_A16B16G16R16},
+        {DDI_FORMAT_R32G32B32A32F,  Format_R32G32B32A32F},
+        {FOURCC_YVYU,               Format_YVYU},
+        {FOURCC_UYVY,               Format_UYVY},
+        {FOURCC_VYUY,               Format_VYUY},
+        {FOURCC_AYUV,               Format_AYUV},
+        {FOURCC_NV12,               Format_NV12},
+        {FOURCC_NV21,               Format_NV21},
+        {FOURCC_NV11,               Format_NV11},
+        {FOURCC_P208,               Format_P208},
+        {FOURCC_IMC1,               Format_IMC1},
+        {FOURCC_IMC2,               Format_IMC2},
+        {FOURCC_IMC3,               Format_IMC3},
+        {FOURCC_IMC4,               Format_IMC4},
+        {FOURCC_I420,               Format_I420},
+        {FOURCC_IYUV,               Format_IYUV},
+        {FOURCC_YV12,               Format_YV12},
+        {FOURCC_YVU9,               Format_YVU9},
+        {FOURCC_AI44,               Format_AI44},
+        {FOURCC_IA44,               Format_IA44},
+        {FOURCC_400P,               Format_400P},
+        {FOURCC_411P,               Format_411P},
+        {FOURCC_411R,               Format_411R},
+        {FOURCC_422H,               Format_422H},
+        {FOURCC_422V,               Format_422V},
+        {FOURCC_444P,               Format_444P},
+        {FOURCC_RGBP,               Format_RGBP},
+        {FOURCC_BGRP,               Format_BGRP},
+        {FOURCC_P010,               Format_P010},
+        {FOURCC_P016,               Format_P016},
+        {FOURCC_Y216,               Format_Y216},
+        {FOURCC_Y416,               Format_Y416},
+        {FOURCC_Y210,               Format_Y210},
+        {FOURCC_Y410,               Format_Y410}
+    };
+
+    auto iter = os2MosFmtMap.find(format);
+    if (iter != os2MosFmtMap.end())
+    {
+        return iter->second;
+    }
+    return Format_Invalid;
+}
+
+bool MosInterface::IsCompressibelSurfaceSupported(MEDIA_FEATURE_TABLE *skuTable)
+{
+    if(skuTable)
+    {
+        return MEDIA_IS_SKU(skuTable, FtrCompressibleSurfaceDefault);
+    }
+    return true;
+}
+
+bool MosInterface::IsMismatchOrderProgrammingSupported()
 {
     return false;
 }

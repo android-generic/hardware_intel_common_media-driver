@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2021, Intel Corporation
+* Copyright (c) 2011-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -660,7 +660,7 @@ MOS_STATUS VPHAL_VEBOX_STATE_G12_BASE::AllocateResources()
                 MOS_HW_RESOURCE_DEF_MAX,
                 MOS_TILE_UNSET_GMM,
                 memTypeSurfVideoMem,
-                MOS_MEMPOOL_DEVICEMEMORY == memTypeSurfVideoMem));
+                VPP_INTER_RESOURCE_NOTLOCKABLE));
 
             pVeboxState->FFDISurfaces[i]->SampleType = SampleType;
 
@@ -682,8 +682,8 @@ MOS_STATUS VPHAL_VEBOX_STATE_G12_BASE::AllocateResources()
             if (bAllocated)
             {
                 // Report Compress Status
-                m_reporting->FFDICompressible = bSurfCompressible;
-                m_reporting->FFDICompressMode = (uint8_t)(SurfCompressionMode);
+                m_reporting->GetFeatures().ffdiCompressible = bSurfCompressible;
+                m_reporting->GetFeatures().ffdiCompressMode = (uint8_t)(SurfCompressionMode);
             }
         }
     }
@@ -746,7 +746,7 @@ MOS_STATUS VPHAL_VEBOX_STATE_G12_BASE::AllocateResources()
                 MOS_HW_RESOURCE_DEF_MAX,
                 tileModeByForce,
                 memTypeSurfVideoMem,
-                MOS_MEMPOOL_DEVICEMEMORY == memTypeSurfVideoMem));
+                VPP_INTER_RESOURCE_NOTLOCKABLE));
 
             // if allocated, pVeboxState->PreviousSurface is not valid for DN reference.
             if (bAllocated)
@@ -787,8 +787,8 @@ MOS_STATUS VPHAL_VEBOX_STATE_G12_BASE::AllocateResources()
             if (bAllocated)
             {
                 // Report Compress Status
-                m_reporting->FFDNCompressible = bFFDNSurfCompressible;
-                m_reporting->FFDNCompressMode = (uint8_t)(FFDNSurfCompressionMode);
+                m_reporting->GetFeatures().ffdnCompressible = bFFDNSurfCompressible;
+                m_reporting->GetFeatures().ffdnCompressMode = (uint8_t)(FFDNSurfCompressionMode);
             }
         }
     }
@@ -846,8 +846,8 @@ MOS_STATUS VPHAL_VEBOX_STATE_G12_BASE::AllocateResources()
                 VPHAL_RENDER_CHK_STATUS(VeboxInitSTMMHistory(i));
 
                 // Report Compress Status
-                m_reporting->STMMCompressible = bSurfCompressible;
-                m_reporting->STMMCompressMode = (uint8_t)(SurfCompressionMode);
+                m_reporting->GetFeatures().stmmCompressible = bSurfCompressible;
+                m_reporting->GetFeatures().stmmCompressMode = (uint8_t)(SurfCompressionMode);
             }
         }
     }
@@ -1048,7 +1048,7 @@ MOS_STATUS VPHAL_VEBOX_STATE_G12_BASE::AllocateResources()
             {
 #if defined(ENABLE_KERNELS) && !defined(_FULL_OPEN_SOURCE)
                 PRENDERHAL_INTERFACE pRenderHal = pVeboxState->m_pRenderHal;
-                m_hdr3DLutGenerator = MOS_New(Hdr3DLutGenerator, pRenderHal, IGVP3DLUT_GENERATION_G12_TGLLP, IGVP3DLUT_GENERATION_G12_TGLLP_SIZE);
+                m_hdr3DLutGenerator             = MOS_New(Hdr3DLutGenerator, pRenderHal, m_hdr3DLutKernelBinary, m_hdr3DLutKernelBinarySize);
 #endif
             }
         }
@@ -1225,6 +1225,13 @@ MOS_STATUS VPHAL_VEBOX_STATE_G12_BASE::SetupDiIecpStateForOutputSurf(
             MOS_ZeroMemory(&VeboxSurfCntlParams, sizeof(VeboxSurfCntlParams));
             VeboxSurfCntlParams.bIsCompressed   = pSurface->bIsCompressed;
             VeboxSurfCntlParams.CompressionMode = pSurface->CompressionMode;
+
+            if (pSurface->OsResource.bUncompressedWriteNeeded)
+            {
+                VPHAL_RENDER_NORMALMESSAGE("Vebox uncompressed write needed as previous write need clear ");
+                VeboxSurfCntlParams.CompressionMode = MOS_MMC_RC;
+            }
+
             VPHAL_RENDER_CHK_STATUS(pVeboxInterface->AddVeboxSurfaceControlBits(
                 &VeboxSurfCntlParams,
                 (uint32_t *)&(pVeboxDiIecpCmdParams->CurrOutputSurfCtrl.Value)));
@@ -2389,6 +2396,9 @@ VPHAL_OUTPUT_PIPE_MODE VPHAL_VEBOX_STATE_G12_BASE::GetOutputPipe(
     VPHAL_RENDER_CHK_NULL_NO_STATUS(pcRenderParams);
     VPHAL_RENDER_CHK_NULL_NO_STATUS(pRenderData);
     VPHAL_RENDER_CHK_NULL_NO_STATUS(pSrcSurface);
+    VPHAL_RENDER_CHK_NULL_NO_STATUS(pcRenderParams->pTarget[0]);
+
+    pTarget             = pcRenderParams->pTarget[0];
 
     bCompBypassFeasible = IS_COMP_BYPASS_FEASIBLE(pRenderData->bCompNeeded, pcRenderParams, pSrcSurface);
 
@@ -2411,6 +2421,15 @@ VPHAL_OUTPUT_PIPE_MODE VPHAL_VEBOX_STATE_G12_BASE::GetOutputPipe(
         goto finish;
     }
 
+    // Let Kernel to output P010 instead of VEBOX output
+    if (pSrcSurface->p3DLutParams &&
+        (pTarget->Format == Format_P010 ||
+         pTarget->Format == Format_P016))
+    {
+        OutputPipe = VPHAL_OUTPUT_PIPE_MODE_COMP;
+        goto finish;
+    }
+
     bOutputPipeVeboxFeasible = IS_OUTPUT_PIPE_VEBOX_FEASIBLE(pVeboxState, pcRenderParams, pSrcSurface);
     if (bOutputPipeVeboxFeasible)
     {
@@ -2423,9 +2442,6 @@ VPHAL_OUTPUT_PIPE_MODE VPHAL_VEBOX_STATE_G12_BASE::GetOutputPipe(
         OutputPipe = VPHAL_OUTPUT_PIPE_MODE_COMP;
         goto finish;
     }
-
-    pTarget             = pcRenderParams->pTarget[0];
-    VPHAL_RENDER_CHK_NULL_NO_STATUS(pcRenderParams->pTarget[0]);
 
     bHDRToneMappingNeed = (pSrcSurface->pHDRParams || pTarget->pHDRParams);
     // Check if SFC can be the output pipe
@@ -3083,41 +3099,44 @@ VPHAL_VEBOX_STATE_G12_BASE::VPHAL_VEBOX_STATE_G12_BASE(
     pKernelParamTable = (PRENDERHAL_KERNEL_PARAM)g_Vebox_KernelParam_g12;
     iNumFFDISurfaces  = 2;  // PE on: 4 used. PE off: 2 used
 
+#if defined(ENABLE_KERNELS) && !defined(_FULL_OPEN_SOURCE)
+    m_hdr3DLutKernelBinary     = (uint32_t *)IGVP3DLUT_GENERATION_G12_TGLLP;
+    m_hdr3DLutKernelBinarySize = IGVP3DLUT_GENERATION_G12_TGLLP_SIZE;
+#endif
 }
 
 MOS_STATUS VPHAL_VEBOX_STATE_G12_BASE::Initialize(
     const VphalSettings         *pSettings,
     Kdll_State                  *pKernelDllState)
 {
-    MOS_STATUS                          eStatus;
-    MOS_USER_FEATURE_VALUE_DATA         UserFeatureData;
+    MOS_STATUS eStatus   = MOS_STATUS_SUCCESS;
     PVPHAL_VEBOX_STATE_G12_BASE         pVeboxState = this;
+    bool       enableMMC   = false;
 
-    eStatus      = MOS_STATUS_SUCCESS;
     VPHAL_VEBOX_STATE::Initialize(pSettings, pKernelDllState);
 
     // Read user feature key for MMC enable
-    MOS_ZeroMemory(&UserFeatureData, sizeof(UserFeatureData));
-    UserFeatureData.i32DataFlag = MOS_USER_FEATURE_VALUE_DATA_FLAG_CUSTOM_DEFAULT_VALUE_TYPE;
-#if(LINUX)
-    UserFeatureData.bData       = !MEDIA_IS_WA(pVeboxState->m_pWaTable, WaDisableVPMmc); // enable MMC by default
+#if (LINUX) && (!WDDM_LINUX)
+    enableMMC       = !MEDIA_IS_WA(pVeboxState->m_pWaTable, WaDisableVPMmc); // enable MMC by default
 #else
-    UserFeatureData.bData = true;
+    enableMMC         = true;
 #endif
-    MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __VPHAL_ENABLE_MMC_ID,
-        &UserFeatureData,
-        m_pOsInterface->pOsContext));
+    ReadUserSetting(
+        m_userSettingPtr,
+        enableMMC,
+        __VPHAL_ENABLE_MMC,
+        MediaUserSetting::Group::Sequence,
+        enableMMC,
+        true);
 
     // Set Vebox MMC enable
-    pVeboxState->bEnableMMC = UserFeatureData.bData && MEDIA_IS_SKU(pVeboxState->m_pSkuTable, FtrE2ECompression);
+    pVeboxState->bEnableMMC = enableMMC && MEDIA_IS_SKU(pVeboxState->m_pSkuTable, FtrE2ECompression);
 
     // Set SFC MMC enable
     if (MEDIA_IS_SKU(pVeboxState->m_pSkuTable, FtrSFCPipe) &&
         m_sfcPipeState)
     {
-        m_sfcPipeState->SetSfcOutputMmcStatus(UserFeatureData.bData && MEDIA_IS_SKU(pVeboxState->m_pSkuTable, FtrE2ECompression));
+        m_sfcPipeState->SetSfcOutputMmcStatus(enableMMC && MEDIA_IS_SKU(pVeboxState->m_pSkuTable, FtrE2ECompression));
     }
 
     return eStatus;

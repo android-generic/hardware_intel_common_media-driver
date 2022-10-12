@@ -33,7 +33,7 @@
 
 #include "renderhal.h"
 #include "mhw_vebox.h"
-#include "vphal_common.h"       // Common interfaces and structures
+#include "vp_common.h"       // Common interfaces and structures
 #include "vp_pipeline_common.h"
 
 #if !defined(LINUX) && !defined(ANDROID)
@@ -281,11 +281,7 @@ public:
     //!
     //! \brief    VpSurfaceDumper constuctor
     //!
-    VpSurfaceDumper(PMOS_INTERFACE pOsInterface)
-    :   m_dumpSpec(),
-        m_osInterface(pOsInterface)
-    {
-    };
+    VpSurfaceDumper(PMOS_INTERFACE pOsInterface);
 
     //!
     //! \brief    VpSurfaceDumper destuctor
@@ -390,6 +386,7 @@ protected:
     PMOS_INTERFACE              m_osInterface;
     char                        m_dumpPrefix[MAX_PATH];     // Called frequently, so avoid repeated stack resizing with member data
     char                        m_dumpLoc[MAX_PATH];        // to avoid recursive call from diff owner but sharing the same buffer
+    MediaUserSettingSharedPtr   m_userSettingPtr = nullptr; // userSettingInstance
 
 private:
 
@@ -461,6 +458,8 @@ private:
     //!
     char* WhitespaceTrim(
         char*                       ptr);
+
+MEDIA_CLASS_DEFINE_END(VpSurfaceDumper)
 };
 
 
@@ -476,11 +475,7 @@ public:
     //!
     //! \brief    VphalParameterDumper constuctor
     //!
-    VpParameterDumper(PMOS_INTERFACE pOsInterface)
-    :   m_dumpSpec(),
-        m_osInterface(pOsInterface)
-    {
-    };
+    VpParameterDumper(PMOS_INTERFACE pOsInterface);
 
     //!
     //! \brief    Get VPHAL Parameters Dump Spec
@@ -592,7 +587,7 @@ protected:
 
 private:
     PMOS_INTERFACE  m_osInterface;
-
+    MediaUserSettingSharedPtr m_userSettingPtr = nullptr;  // userSettingInstance
     //!
     //! \brief    Gets Debug Whole Format String
     //! \param    [in] format
@@ -691,6 +686,17 @@ private:
     //!           String of vphal denoise level
     //!
     const char * GetDenoiseModeStr(VPHAL_NOISELEVEL noise_level);
+
+    //!
+    //! \brief    Gets Debug HVS Denoise Mode String
+    //! \param    [in] hvs denoise mode
+    //!           vphal hvsdn mode
+    //! \return   const char *
+    //!           String of vphal hvs denoise mode
+    //!
+    const char *GetHVSDenoiseModeStr(VPHAL_HVSDN_MODE hvs_dn_mode);
+
+MEDIA_CLASS_DEFINE_END(VpParameterDumper)
 };
 
 //!
@@ -795,6 +801,7 @@ public:
     static const char * GetFormatStr(
         MOS_FORMAT                format);
 
+MEDIA_CLASS_DEFINE_END(VpDumperTool)
 };
 #endif // (_DEBUG || _RELEASE_INTERNAL)
 

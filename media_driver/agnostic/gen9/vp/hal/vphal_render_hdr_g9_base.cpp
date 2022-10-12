@@ -833,6 +833,8 @@ MOS_STATUS VpHal_HdrIsInputFormatSupported_g9(
         pSrcSurface->Format == Format_B10G10R10A2  ||
         pSrcSurface->Format == Format_A16B16G16R16 ||
         pSrcSurface->Format == Format_A16R16G16B16 ||
+        pSrcSurface->Format == Format_A16B16G16R16F||
+        pSrcSurface->Format == Format_A16R16G16B16F||
         pSrcSurface->Format == Format_P016         ||
         pSrcSurface->Format == Format_NV12         ||
         pSrcSurface->Format == Format_P010         ||
@@ -1631,7 +1633,7 @@ MOS_STATUS VpHal_HdrInitCoeff_g9 (
 
         if (pHdrState->pSrcSurf[i]->SurfType == SURF_IN_PRIMARY)
         {
-            pHdrState->Reporting.HDRMode = pHdrState->HdrMode[i];
+            pHdrState->Reporting.GetFeatures().hdrMode = pHdrState->HdrMode[i];
         }
 
         // EOTF/CCM/Tone Mapping/OETF require RGB input
@@ -2732,7 +2734,7 @@ MOS_STATUS VpHal_HdrLoadStaticData_g9(
         {
             if (b3dLut)
             {
-                pHdrState->Reporting.HDRMode = (VPHAL_HDR_MODE)(((uint32_t)pHdrState->Reporting.HDRMode) | VPHAL_HDR_MODE_3DLUT_MASK);
+                pHdrState->Reporting.GetFeatures().hdrMode = (VPHAL_HDR_MODE)(((uint32_t)pHdrState->Reporting.GetFeatures().hdrMode) | VPHAL_HDR_MODE_3DLUT_MASK);
             }
         }
 

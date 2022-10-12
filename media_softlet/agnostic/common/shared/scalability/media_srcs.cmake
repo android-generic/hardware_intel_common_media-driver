@@ -23,6 +23,7 @@ set(TMP_SOURCES_
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability.cpp
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability_multipipe.cpp
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability_singlepipe.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/media_scalability_singlepipe_next.cpp
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability_mdf.cpp
 )
 
@@ -32,11 +33,11 @@ set(TMP_HEADERS_
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability.h
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability_multipipe.h
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability_singlepipe.h
+    ${CMAKE_CURRENT_LIST_DIR}/media_scalability_singlepipe_next.h
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability_option.h
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability_mdf.h
 )
 
-if("${MEDIA_EXT}" STREQUAL "")
 set(TMP_SOURCES_
     ${TMP_SOURCES_}
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability_factory.cpp
@@ -45,6 +46,25 @@ set(TMP_HEADERS_
     ${TMP_HEADERS_}
     ${CMAKE_CURRENT_LIST_DIR}/media_scalability_factory.h
 )
-endif() 
+
+set(SOURCES_
+    ${SOURCES_}
+    ${TMP_SOURCES_}
+ )
+
+set(HEADERS_
+    ${HEADERS_}
+    ${TMP_HEADERS_}
+)
+
+set(COMMON_SOURCES_
+    ${COMMON_SOURCES_}
+    ${TMP_SOURCES_}
+)
+
+set(COMMON_HEADERS_
+    ${COMMON_HEADERS_}
+    ${TMP_HEADERS_}
+)
 
 media_add_curr_to_include_path()

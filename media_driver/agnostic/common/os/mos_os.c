@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2019, Intel Corporation
+* Copyright (c) 2009-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -33,6 +33,7 @@
 #include "mos_util_debug.h"
 #include "mos_util_user_interface.h"
 #include "mos_interface.h"
+#include "media_user_setting.h"
 
 PerfUtility* g_perfutility = PerfUtility::getInstance();
 
@@ -104,7 +105,17 @@ MOS_STATUS Mos_OsFillResource(
 
     uint8_t *       pByte = nullptr;
     MOS_LOCK_PARAMS LockFlags;
-
+    uint32_t        size = 0;
+#ifndef VPSOLO_EMUL
+    if (pOsResource->pGmmResInfo)
+    {
+        size = (uint32_t)pOsResource->pGmmResInfo->GetSizeSurface();
+    }
+    if (dwSize > size)
+    {
+        MOS_OS_ASSERTMESSAGE("dwSize (%x)> size (%x)", dwSize, size);
+    }
+#endif
     // Lock the surface for writing
     MOS_ZeroMemory(&LockFlags, sizeof(MOS_LOCK_PARAMS));
 
@@ -211,6 +222,7 @@ MOS_STATUS Mos_OsGetBitsPerPixel(
     case Format_A8P8:
     case Format_A8L8:
     case Format_R16U:
+    case Format_V8U8:
         *piBpp = 16;
         break;
 
@@ -438,7 +450,7 @@ MOS_STATUS Mos_DumpCommandBuffer(
             MOS_DIR_SEPERATOR, MOS_COMMAND_BUFFER_OUT_FILE, dwCommandBufferNumber);
 
         // Write the output buffer to file.
-        MOS_OS_CHK_STATUS(MOS_WriteFileFromPtr((const char *)sFileName, pOutputBuffer, dwBytesWritten));
+        MOS_OS_CHK_STATUS(MosUtilities::MosWriteFileFromPtr((const char *)sFileName, pOutputBuffer, dwBytesWritten));
     }
 
     if (pOsInterface->bDumpCommandBufferAsMessages)
@@ -463,7 +475,7 @@ MOS_STATUS Mos_DumpCommandBuffer(
         {
             if (pOsInterface->bDumpCommandBufferToFile)
             {
-                MOS_OS_CHK_STATUS(MOS_AppendFileFromPtr((const char *)sFileName, pOutputBuffer, dwBytesWritten));
+                MOS_OS_CHK_STATUS(MosUtilities::MosAppendFileFromPtr((const char *)sFileName, pOutputBuffer, dwBytesWritten));
             }
             if (pOsInterface->bDumpCommandBufferAsMessages)
             {
@@ -477,7 +489,7 @@ MOS_STATUS Mos_DumpCommandBuffer(
 
     if (pOsInterface->bDumpCommandBufferToFile)
     {
-        MOS_OS_CHK_STATUS(MOS_AppendFileFromPtr((const char *)sFileName, pOutputBuffer, dwBytesWritten));
+        MOS_OS_CHK_STATUS(MosUtilities::MosAppendFileFromPtr((const char *)sFileName, pOutputBuffer, dwBytesWritten));
     }
 
     if (pOsInterface->bDumpCommandBufferAsMessages)
@@ -514,9 +526,11 @@ MOS_STATUS Mos_DumpCommandBufferInit(
     MOS_USER_FEATURE_VALUE_DATA         UserFeatureData;
     char                                *psFileNameAfterPrefix = nullptr;
     size_t                              nSizeFileNamePrefix = 0;
+    MediaUserSettingSharedPtr           userSettingPtr = nullptr;
 
     MOS_OS_CHK_NULL_RETURN(pOsInterface);
 
+    userSettingPtr = pOsInterface->pfnGetUserSettingInstance(pOsInterface);
     // Setup member function and variable.
     pOsInterface->pfnDumpCommandBuffer  = Mos_DumpCommandBuffer;
     // Check if command buffer dump was enabled in user feature.
@@ -532,7 +546,7 @@ MOS_STATUS Mos_DumpCommandBufferInit(
     if (pOsInterface->bDumpCommandBufferToFile)
     {
         // Create output directory.
-        eStatus = MOS_LogFileNamePrefix(pOsInterface->sDirName, pOsInterface->pOsContext);
+        eStatus = MosUtilDebug::MosLogFileNamePrefix(pOsInterface->sDirName, userSettingPtr);
         if (eStatus != MOS_STATUS_SUCCESS)
         {
             MOS_OS_NORMALMESSAGE("Failed to create log file prefix. Status = %d", eStatus);
@@ -548,7 +562,7 @@ MOS_STATUS Mos_DumpCommandBufferInit(
             "%c%s",
             MOS_DIR_SEPERATOR, MOS_COMMAND_BUFFER_OUT_DIR);
 
-        eStatus = MOS_CreateDirectory(sFileName);
+        eStatus = MosUtilities::MosCreateDirectory(sFileName);
         if (eStatus != MOS_STATUS_SUCCESS)
         {
             MOS_OS_NORMALMESSAGE("Failed to create output directory. Status = %d", eStatus);
@@ -618,7 +632,7 @@ GpuCmdResInfoDump::GpuCmdResInfoDump(PMOS_CONTEXT mosCtx)
     {
         tmpPath += '/';
     }
-    m_path = tmpPath + "gpuCmdResInfo_" + std::to_string(MOS_GetPid()) + ".txt";
+    m_path = tmpPath + "gpuCmdResInfo_" + std::to_string(MosUtilities::MosGetPid()) + ".txt";
 }
 
 void GpuCmdResInfoDump::Dump(PMOS_INTERFACE pOsInterface) const
@@ -958,7 +972,7 @@ MEMORY_OBJECT_CONTROL_STATE Mos_CachePolicyGetMemoryObject(
 #ifndef SKIP_VE_DEFINE
 MOS_STATUS Mos_CheckVirtualEngineSupported(
     PMOS_INTERFACE      osInterface,
-    bool                isDecode,
+    bool                isNotEncode,
     bool                veDefaultEnable)
 {
     MOS_STATUS                  eStatus = MOS_STATUS_SUCCESS;
@@ -970,7 +984,7 @@ MOS_STATUS Mos_CheckVirtualEngineSupported(
 
     osInterface->pfnGetPlatform(osInterface, &platform);
 
-    if (isDecode)
+    if (isNotEncode)
     {
         //UMD Decode Virtual Engine Override
         // 0: disable. can set to 1 only when KMD VE is enabled.
@@ -1059,5 +1073,5 @@ MOS_STATUS Mos_CheckVirtualEngineSupported(
 }
 #endif // !SKIP_VE_DEFINE
 
-
+void *MosStreamState::pvSoloContext = nullptr; 
 

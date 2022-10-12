@@ -308,7 +308,7 @@ class CodechalVdencAvcStateG12::SfdCurbe
 };
 // clang-format on
 
-struct BrcInitDmem
+struct CodechalVdencAvcStateG12::BrcInitDmem
 {
     uint8_t     BRCFunc_U8;                           // 0: Init; 2: Reset
     uint8_t     OpenSourceEnable_U8;                  // 0: disable opensource, 1: enable opensource
@@ -373,9 +373,8 @@ struct BrcInitDmem
     uint8_t     INIT_New_DeltaQP_Adaptation_U8;       // = 1 to enable new delta QP adaption
     uint8_t     RSVD2[55];                            // must be zero
 };
-using PBrcInitDmem = struct BrcInitDmem*;
 
-struct BrcUpdateDmem
+struct CodechalVdencAvcStateG12::BrcUpdateDmem
 {
     uint8_t     BRCFunc_U8;                           // =1 for Update, other values are reserved for future use
     uint8_t     RSVD[3];
@@ -455,9 +454,12 @@ struct BrcUpdateDmem
     uint8_t      UPD_ROM_CURRENT_U8;        // ROM average of current frame
     uint8_t      UPD_ROM_ZERO_U8;           // ROM zero percentage (255 is 100%)
     uint8_t      UPD_TCBRC_SCENARIO_U8;
-    uint8_t      RSVD2[12];
+    uint8_t      UPD_EnableFineGrainLA;
+    int8_t       UPD_DeltaQpDcOffset;
+    uint16_t     UPD_NumSlicesForRounding;
+    uint32_t     UPD_UserMaxFramePB;        // In Bytes
+    uint8_t      RSVD2[4];
 };
-using PBrcUpdateDmem = struct BrcUpdateDmem*;
 
 // clang-format off
 const uint32_t CodechalVdencAvcStateG12::m_mvCostSkipBiasQPel[3][8] =
@@ -647,11 +649,27 @@ CodechalVdencAvcStateG12::~CodechalVdencAvcStateG12()
     {
         MOS_FreeMemAndSetNull(m_sinlgePipeVeState);
     }
+    MOS_SafeFreeMemory(m_pMBQPShadowBuffer);
+
+    if (!m_swBrcMode && m_singleTaskPhaseSupported)
+    {
+        m_osInterface->pfnFreeResource(m_osInterface, &m_resPakOutputViaMmioBuffer);
+    }
 
     CODECHAL_DEBUG_TOOL(
         DestroyAvcPar();
         MOS_Delete(m_encodeParState);
     )
+}
+
+void CodechalVdencAvcStateG12::InitializeDataMember()
+{
+    CODECHAL_ENCODE_FUNCTION_ENTER;
+    CodechalVdencAvcState::InitializeDataMember();
+    if (!m_swBrcMode && m_singleTaskPhaseSupported)
+    {
+        MOS_ZeroMemory(&m_resPakOutputViaMmioBuffer, sizeof(MOS_RESOURCE));
+    }
 }
 
 MOS_STATUS CodechalVdencAvcStateG12::InitializeState()
@@ -674,6 +692,55 @@ MOS_STATUS CodechalVdencAvcStateG12::InitializeState()
     }
 
     return eStatus;
+}
+
+MOS_STATUS CodechalVdencAvcStateG12::AllocateResources()
+{
+    CODECHAL_ENCODE_FUNCTION_ENTER;
+
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(CodechalVdencAvcState::AllocateResources());
+
+    if (!m_swBrcMode && m_singleTaskPhaseSupported)
+    {
+        // Initiate allocation parameters and lock flags
+        MOS_ALLOC_GFXRES_PARAMS allocParamsForBufferLinear;
+        MOS_ZeroMemory(&allocParamsForBufferLinear, sizeof(MOS_ALLOC_GFXRES_PARAMS));
+        allocParamsForBufferLinear.Type = MOS_GFXRES_BUFFER;
+        allocParamsForBufferLinear.TileType = MOS_TILE_LINEAR;
+        allocParamsForBufferLinear.Format = Format_Buffer;
+
+        MOS_LOCK_PARAMS lockFlagsWriteOnly;
+        MOS_ZeroMemory(&lockFlagsWriteOnly, sizeof(MOS_LOCK_PARAMS));
+        lockFlagsWriteOnly.WriteOnly = 1;
+
+        // PAK statistics buffer
+        allocParamsForBufferLinear.dwBytes = CODECHAL_PAGE_SIZE;
+        allocParamsForBufferLinear.pBufName = "VDENC PAK Statistics MMIO Registers Output Buffer";
+
+        CODECHAL_ENCODE_CHK_STATUS_MESSAGE_RETURN(m_osInterface->pfnAllocateResource(
+            m_osInterface,
+            &allocParamsForBufferLinear,
+            &m_resPakOutputViaMmioBuffer),
+            "%s: Failed to allocate '%s'\n",
+            __FUNCTION__,
+            allocParamsForBufferLinear.pBufName);
+
+        uint8_t* data = (uint8_t*)m_osInterface->pfnLockResource(
+            m_osInterface,
+            &(m_resPakOutputViaMmioBuffer),
+            &lockFlagsWriteOnly);
+
+        if (data == nullptr)
+        {
+            CODECHAL_ENCODE_ASSERTMESSAGE("Failed to Lock '%s'", allocParamsForBufferLinear.pBufName);
+            return MOS_STATUS_UNKNOWN;
+        }
+
+        MOS_ZeroMemory(data, allocParamsForBufferLinear.dwBytes);
+        m_osInterface->pfnUnlockResource(m_osInterface, &m_resPakOutputViaMmioBuffer);
+    }
+
+    return MOS_STATUS_SUCCESS;
 }
 
 MOS_STATUS CodechalVdencAvcStateG12::SetSequenceStructs()
@@ -778,13 +845,22 @@ MOS_STATUS CodechalVdencAvcStateG12::SetupMBQPStreamIn(
     MOS_ZeroMemory(&lockFlagsReadOnly, sizeof(MOS_LOCK_PARAMS));
     lockFlagsReadOnly.ReadOnly = true;
 
-    auto pInputData = (uint8_t*)m_osInterface->pfnLockResource(
+    auto pMBQPBuffer = (uint8_t*)m_osInterface->pfnLockResource(
         m_osInterface,
         &(m_encodeParams.psMbQpDataSurface->OsResource),
         &lockFlagsReadOnly);
-    CODECHAL_ENCODE_CHK_NULL_RETURN(pInputData);
+    CODECHAL_ENCODE_CHK_NULL_RETURN(pMBQPBuffer);
 
-    CopyMBQPDataToStreamIn(pData, pInputData);
+    uint32_t uiSize = (uint32_t)m_encodeParams.psMbQpDataSurface->OsResource.pGmmResInfo->GetSizeSurface();
+    if (uiSize > m_uiMBQPShadowBufferSize)
+    {
+        m_uiMBQPShadowBufferSize = uiSize;
+        m_pMBQPShadowBuffer = (uint8_t*)MOS_ReallocMemory(m_pMBQPShadowBuffer, uiSize);
+    }
+    CODECHAL_ENCODE_CHK_NULL_RETURN(m_pMBQPShadowBuffer);
+    MOS_SecureMemcpy(m_pMBQPShadowBuffer, uiSize, pMBQPBuffer, uiSize);
+
+    CopyMBQPDataToStreamIn(pData, m_pMBQPShadowBuffer);
 
     m_osInterface->pfnUnlockResource(
         m_osInterface,
@@ -834,6 +910,56 @@ MOS_STATUS CodechalVdencAvcStateG12::UserFeatureKeyReport()
 
 #endif // _DEBUG || _RELEASE_INTERNAL
     return eStatus;
+}
+
+void CodechalVdencAvcStateG12::SetBufferToStorePakStatistics()
+{
+    CODECHAL_ENCODE_FUNCTION_ENTER;
+
+    if (!m_swBrcMode && m_singleTaskPhaseSupported)
+    {
+        // Store PAK statistics after encode Frame_N into separate internal buffer to get rid of
+        // dependency with the DMEM buffer for Frame_N+1
+        //
+        // This data will be copied into DMEM for Frame_N+1 at the start of CMD buffer for Frame_N+1
+        // using MI_COPY_MEM_MEM cmd
+        m_resVdencBrcUpdateDmemBufferPtr[0] = &m_resPakOutputViaMmioBuffer;
+        m_resVdencBrcUpdateDmemBufferPtr[1] = nullptr;
+    }
+    else
+    {
+        CodechalVdencAvcState::SetBufferToStorePakStatistics();
+    }
+}
+
+MOS_STATUS CodechalVdencAvcStateG12::AddMiStoreForHWOutputToHucDmem(PMOS_COMMAND_BUFFER cmdBuffer)
+{
+    CODECHAL_ENCODE_FUNCTION_ENTER;
+
+    if (!m_swBrcMode && m_singleTaskPhaseSupported)
+    {
+        // Copy PAK statistics data from internal buffer to DMEM
+        MHW_MI_COPY_MEM_MEM_PARAMS copyMemMemParams = {};
+        copyMemMemParams.presSrc = &m_resPakOutputViaMmioBuffer;
+        copyMemMemParams.presDst = &(m_resVdencBrcUpdateDmemBuffer[m_currRecycledBufIdx][m_currPass]);
+
+        copyMemMemParams.dwSrcOffset = copyMemMemParams.dwDstOffset = CODECHAL_OFFSETOF(BrcUpdateDmem, FrameByteCount);
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_miInterface->AddMiCopyMemMemCmd(
+            cmdBuffer,
+            &copyMemMemParams));
+
+        copyMemMemParams.dwSrcOffset = copyMemMemParams.dwDstOffset = CODECHAL_OFFSETOF(BrcUpdateDmem, ImgStatusCtrl);
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_miInterface->AddMiCopyMemMemCmd(
+            cmdBuffer,
+            &copyMemMemParams));
+
+        copyMemMemParams.dwSrcOffset = copyMemMemParams.dwDstOffset = m_vdencBrcNumOfSliceOffset;
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_miInterface->AddMiCopyMemMemCmd(
+            cmdBuffer,
+            &copyMemMemParams));
+    }
+
+    return MOS_STATUS_SUCCESS;
 }
 
 MOS_STATUS CodechalVdencAvcStateG12::SubmitCommandBuffer(
@@ -919,6 +1045,71 @@ MOS_STATUS CodechalVdencAvcStateG12::Initialize(CodechalSetting * settings)
 
     return eStatus;
 }
+
+bool CodechalVdencAvcStateG12::ProcessRoiDeltaQp()
+{
+    CODECHAL_ENCODE_FUNCTION_ENTER;
+
+    // Intialize ROIDistinctDeltaQp to be min expected delta qp, setting to -128
+    // Check if forceQp is needed or not
+    // forceQp is enabled if there are greater than 3 distinct delta qps or if the deltaqp is beyond range (-8, 7)
+    for (auto k = 0; k < m_maxNumRoi; k++)
+    {
+        m_avcPicParam->ROIDistinctDeltaQp[k] = -128;
+    }
+
+    int32_t numQp = 0;
+    for (int32_t i = 0; i < m_avcPicParam->NumROI; i++)
+    {
+        bool dqpNew = true;
+
+        //Get distinct delta Qps among all ROI regions, index 0 having the lowest delta qp
+        int32_t k = numQp - 1;
+        for (; k >= 0; k--)
+        {
+            if (m_avcPicParam->ROI[i].PriorityLevelOrDQp == m_avcPicParam->ROIDistinctDeltaQp[k] ||
+                m_avcPicParam->ROI[i].PriorityLevelOrDQp == 0)
+            {
+                dqpNew = false;
+                break;
+            }
+            else if (m_avcPicParam->ROI[i].PriorityLevelOrDQp < m_avcPicParam->ROIDistinctDeltaQp[k])
+            {
+                continue;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        if (dqpNew)
+        {
+            for (int32_t j = numQp - 1; (j >= k + 1 && j >= 0); j--)
+            {
+                m_avcPicParam->ROIDistinctDeltaQp[j + 1] = m_avcPicParam->ROIDistinctDeltaQp[j];
+            }
+            m_avcPicParam->ROIDistinctDeltaQp[k + 1] = m_avcPicParam->ROI[i].PriorityLevelOrDQp;
+            numQp++;
+        }
+    }
+
+    //Set the ROI DeltaQp to zero for remaining array elements
+    for (auto k = numQp; k < m_maxNumRoi; k++)
+    {
+        m_avcPicParam->ROIDistinctDeltaQp[k] = 0;
+    }
+    m_avcPicParam->NumROIDistinctDeltaQp = (int8_t)numQp;
+
+    // return whether is native ROI or not
+    return !(numQp > m_maxNumNativeRoi || m_avcPicParam->ROIDistinctDeltaQp[0] < -8 || m_avcPicParam->ROIDistinctDeltaQp[numQp - 1] > 7);
+}
+
+bool CodechalVdencAvcStateG12::IsMBBRCControlEnabled()
+{
+    return m_mbBrcEnabled;
+}
+
 
 bool CodechalVdencAvcStateG12::CheckSupportedFormat(PMOS_SURFACE surface)
 {
@@ -1029,7 +1220,7 @@ MOS_STATUS CodechalVdencAvcStateG12::SetDmemHuCBrcInitReset()
     MOS_LOCK_PARAMS lockFlagsWriteOnly;
     memset(&lockFlagsWriteOnly, 0, sizeof(MOS_LOCK_PARAMS));
     lockFlagsWriteOnly.WriteOnly = 1;
-    auto hucVDEncBrcInitDmem     = (PBrcInitDmem)m_osInterface->pfnLockResource(
+    auto hucVDEncBrcInitDmem     = (BrcInitDmem *)m_osInterface->pfnLockResource(
         m_osInterface, &m_resVdencBrcInitDmemBuffer[m_currRecycledBufIdx], &lockFlagsWriteOnly);
 
     CODECHAL_ENCODE_CHK_NULL_RETURN(hucVDEncBrcInitDmem);
@@ -1037,8 +1228,11 @@ MOS_STATUS CodechalVdencAvcStateG12::SetDmemHuCBrcInitReset()
 
     SetDmemHuCBrcInitResetImpl<BrcInitDmem>(hucVDEncBrcInitDmem);
 
-    // fractional QP enable for extended rho domain
+    // enable fractional QP by extended rho domain setting
     hucVDEncBrcInitDmem->INIT_FracQPEnable_U8 = (uint8_t)m_vdencInterface->IsRhoDomainStatsEnabled();
+    // enable fractional QP for TCBRC
+    if ((m_avcPicParam->TargetFrameSize > 0) && (m_lookaheadDepth == 0))
+        hucVDEncBrcInitDmem->INIT_FracQPEnable_U8 = 1;
 
     hucVDEncBrcInitDmem->INIT_SinglePassOnly = m_vdencSinglePassEnable ? true : false;
 
@@ -1093,6 +1287,15 @@ MOS_STATUS CodechalVdencAvcStateG12::SetDmemHuCBrcInitReset()
     return eStatus;
 }
 
+MOS_STATUS CodechalVdencAvcStateG12::DeltaQPUpdate(uint8_t QpModulationStrength)
+{
+    CODECHAL_ENCODE_FUNCTION_ENTER;
+
+    m_qpModulationStrength = QpModulationStrength;
+
+    return MOS_STATUS_SUCCESS;
+}
+
 MOS_STATUS CodechalVdencAvcStateG12::SetDmemHuCBrcUpdate()
 {
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
@@ -1103,7 +1306,7 @@ MOS_STATUS CodechalVdencAvcStateG12::SetDmemHuCBrcUpdate()
     MOS_LOCK_PARAMS lockFlags;
     memset(&lockFlags, 0, sizeof(MOS_LOCK_PARAMS));
     lockFlags.WriteOnly  = 1;
-    auto hucVDEncBrcDmem = (PBrcUpdateDmem)m_osInterface->pfnLockResource(
+    auto hucVDEncBrcDmem = (BrcUpdateDmem *)m_osInterface->pfnLockResource(
         m_osInterface, &m_resVdencBrcUpdateDmemBuffer[m_currRecycledBufIdx][m_currPass], &lockFlags);
     CODECHAL_ENCODE_CHK_NULL_RETURN(hucVDEncBrcDmem);
     SetDmemHuCBrcUpdateImpl<BrcUpdateDmem>(hucVDEncBrcDmem);
@@ -1142,12 +1345,18 @@ MOS_STATUS CodechalVdencAvcStateG12::SetDmemHuCBrcUpdate()
 
     if (m_lookaheadDepth > 0)
     {
+        DeltaQPUpdate(m_avcPicParam->QpModulationStrength);
         hucVDEncBrcDmem->EnableLookAhead = 1;
         hucVDEncBrcDmem->UPD_LA_TargetFulness_U32 = m_targetBufferFulness;
-        hucVDEncBrcDmem->UPD_Delta_U8 = m_avcPicParam->QpModulationStrength;
+        hucVDEncBrcDmem->UPD_Delta_U8 = m_qpModulationStrength;
     }
 
-    hucVDEncBrcDmem->UPD_TCBRC_SCENARIO_U8 = m_avcSeqParam->bAutoMaxPBFrameSizeForSceneChange;
+    // Temporal fix because of DDI flag deprication
+    // Use Cloud Gaming mode by default
+    hucVDEncBrcDmem->UPD_TCBRC_SCENARIO_U8 = 0;
+
+    hucVDEncBrcDmem->UPD_NumSlicesForRounding = GetAdaptiveRoundingNumSlices();
+    hucVDEncBrcDmem->UPD_UserMaxFramePB       = 2 * m_avcPicParam->TargetFrameSize;
 
     CODECHAL_DEBUG_TOOL(
         CODECHAL_ENCODE_CHK_STATUS_RETURN(PopulateBrcUpdateParam(hucVDEncBrcDmem));
@@ -1552,34 +1761,6 @@ void CodechalVdencAvcStateG12::CopyMBQPDataToStreamIn(CODECHAL_VDENC_STREAMIN_ST
     }
 }
 
-MOS_STATUS CodechalVdencAvcStateG12::PrepareHWMetaData(
-    PMOS_RESOURCE       presMetadataBuffer,
-    PMOS_RESOURCE       presSliceSizeStreamoutBuffer,
-    PMOS_COMMAND_BUFFER cmdBuffer)
-{
-    CODECHAL_ENCODE_FUNCTION_ENTER;
-    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
-
-    if (!presMetadataBuffer)
-    {
-        return eStatus;
-    }
-
-    MHW_MI_STORE_REGISTER_MEM_PARAMS miStoreRegMemParamsAVC;
-    MOS_ZeroMemory(&miStoreRegMemParamsAVC, sizeof(miStoreRegMemParamsAVC));
-    miStoreRegMemParamsAVC.presStoreBuffer = presSliceSizeStreamoutBuffer;
-    miStoreRegMemParamsAVC.dwOffset        = 0;
-
-    CODECHAL_ENCODE_CHK_COND_RETURN((m_vdboxIndex > m_hwInterface->GetMfxInterface()->GetMaxVdboxIndex()), "ERROR - vdbox index exceed the maximum");
-    MmioRegistersMfx *mmioRegisters   = m_hwInterface->SelectVdboxAndGetMmioRegister(m_vdboxIndex, cmdBuffer);
-    miStoreRegMemParamsAVC.dwRegister = mmioRegisters->mfcBitstreamBytecountFrameRegOffset;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(m_miInterface->AddMiStoreRegisterMemCmd(cmdBuffer, &miStoreRegMemParamsAVC));
-
-    eStatus = CodechalVdencAvcState::PrepareHWMetaData(presMetadataBuffer, presSliceSizeStreamoutBuffer, cmdBuffer);
-
-    return eStatus;
-}
-
 #if USE_CODECHAL_DEBUG_TOOL
 MOS_STATUS CodechalVdencAvcStateG12::PopulateBrcInitParam(
     void *cmd)
@@ -1901,7 +2082,7 @@ MOS_STATUS CodechalVdencAvcStateG12::DumpParsedBRCUpdateDmem(BrcUpdateDmem* dmem
     CODECHAL_DEBUG_CHK_NULL(m_debugInterface);
 
     // To make sure that DMEM doesn't changed and parsed dump contains all DMEM fields
-    CODECHAL_DEBUG_ASSERT(sizeof(dmem->RSVD2) == 12);
+    CODECHAL_DEBUG_ASSERT(sizeof(dmem->RSVD2) == 4);
 
     if (!m_debugInterface->DumpIsEnabled(CodechalDbgAttr::attrHuCDmem))
     {
@@ -1986,6 +2167,10 @@ MOS_STATUS CodechalVdencAvcStateG12::DumpParsedBRCUpdateDmem(BrcUpdateDmem* dmem
     FIELD_TO_SS(UPD_ROM_CURRENT_U8);
     FIELD_TO_SS(UPD_ROM_ZERO_U8);
     FIELD_TO_SS(UPD_TCBRC_SCENARIO_U8);
+    FIELD_TO_SS(UPD_EnableFineGrainLA);
+    FIELD_TO_SS(UPD_DeltaQpDcOffset);
+    FIELD_TO_SS(UPD_NumSlicesForRounding);
+    FIELD_TO_SS(UPD_UserMaxFramePB);
     ARRAY_TO_SS(RSVD2);
 
     std::string bufName = std::string("ENC-HucDmemUpdate_Parsed_PASS") + std::to_string((uint32_t)m_currPass);

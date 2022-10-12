@@ -29,6 +29,9 @@
 #include "hw_filter.h"
 #include "sw_filter_pipe.h"
 #include "vp_render_cmd_packet.h"
+#ifndef ENABLE_VP_SOFTLET_BUILD
+#include "vp_vebox_cmd_packet_legacy.h"
+#endif
 
 using namespace vp;
 
@@ -222,18 +225,28 @@ bool VpDiParameter::SetPacketParam(VpCmdPacket *pPacket)
 
     if (!m_diFilter.GetExecuteCaps().bDIFmdKernel)
     {
-        VpVeboxCmdPacket *pVeboxPacket = dynamic_cast<VpVeboxCmdPacket *>(pPacket);
-        if (nullptr == pVeboxPacket)
+        VEBOX_DI_PARAMS *params = m_diFilter.GetVeboxParams();
+        if (nullptr == params)
         {
+            VP_PUBLIC_ASSERTMESSAGE("Failed to get vebox di params");
             return false;
         }
 
-        VEBOX_DI_PARAMS *pParams = m_diFilter.GetVeboxParams();
-        if (nullptr == pParams)
+        VpVeboxCmdPacket *packet = dynamic_cast<VpVeboxCmdPacket *>(pPacket);
+        if (packet)
         {
-            return false;
+            return MOS_SUCCEEDED(packet->SetDiParams(params));
         }
-        return MOS_SUCCEEDED(pVeboxPacket->SetDiParams(pParams));
+    #ifndef ENABLE_VP_SOFTLET_BUILD
+        VpVeboxCmdPacketLegacy *packetLegacy = dynamic_cast<VpVeboxCmdPacketLegacy *>(pPacket);
+        if (packetLegacy)
+        {
+            return MOS_SUCCEEDED(packetLegacy->SetDiParams(params));
+        }
+    #endif
+
+        VP_PUBLIC_ASSERTMESSAGE("Invalid packet for vebox di");
+        return false;
     }
     else
     {
@@ -279,7 +292,7 @@ bool PolicyDiHandler::IsFeatureEnabled(VP_EXECUTE_CAPS vpExecuteCaps)
 {
     VP_FUNC_CALL();
 
-    return vpExecuteCaps.bDI;
+    return vpExecuteCaps.bDI && (vpExecuteCaps.bVebox || vpExecuteCaps.bDIFmdKernel);
 }
 
 HwFilterParameter* PolicyDiHandler::CreateHwFilterParam(VP_EXECUTE_CAPS vpExecuteCaps, SwFilterPipe& swFilterPipe, PVP_MHWINTERFACE pHwInterface)
@@ -369,6 +382,9 @@ MOS_STATUS PolicyDiHandler::UpdateFeaturePipe(VP_EXECUTE_CAPS caps, SwFilter &fe
         filter2ndPass->SetFeatureType(FeatureTypeDi);
         filter2ndPass->SetRenderTargetType(RenderTargetTypeParameter);
         filter2ndPass->GetFilterEngineCaps().value = 0;
+        filter2ndPass->GetFilterEngineCaps().bEnabled     = 1;
+        filter2ndPass->GetFilterEngineCaps().RenderNeeded = 1;
+        filter2ndPass->GetFilterEngineCaps().isolated     = 1;
 
         executePipe.AddSwFilterUnordered(filter1ndPass, isInputPipe, index);
     }

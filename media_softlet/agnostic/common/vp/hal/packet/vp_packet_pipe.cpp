@@ -113,6 +113,7 @@ void PacketFactory::ReturnPacket(VpCmdPacket *&pPacket)
         m_VeboxPacketPool.push_back(pPacket);
         break;
     case VP_PIPELINE_PACKET_RENDER:
+    case VP_PIPELINE_PACKET_COMPUTE:
         m_RenderPacketPool.push_back(pPacket);
         break;
     default:
@@ -241,6 +242,13 @@ MOS_STATUS PacketPipe::SwitchContext(PacketType type, MediaScalability *&scalabi
             VP_PUBLIC_CHK_NULL_RETURN(scalability);
             break;
         }
+    case VP_PIPELINE_PACKET_COMPUTE:
+        {
+            VP_PUBLIC_NORMALMESSAGE("Switch to Compute Context");
+            VP_PUBLIC_CHK_STATUS_RETURN(mediaContext->SwitchContext(ComputeVppFunc, &scalPars, &scalability));
+            VP_PUBLIC_CHK_NULL_RETURN(scalability);
+            break;
+        }
     default:
         VP_PUBLIC_CHK_STATUS_RETURN(MOS_STATUS_INVALID_PARAMETER);
     }
@@ -267,6 +275,15 @@ MOS_STATUS PacketPipe::Execute(MediaStatusReport *statusReport, MediaScalability
         prop.packet          = pPacket;
         prop.immediateSubmit = true;
         prop.stateProperty.statusReport = statusReport;
+
+        bool isSkip = false;
+        // Checking if extra processing is needed.
+        isSkip      = pPacket->ExtraProcessing();
+        if (isSkip)
+        {
+            VP_PUBLIC_NORMALMESSAGE("Skip this packet.");
+            continue;
+        }
 
         MediaTask *pTask = pPacket->GetActiveTask();
         VP_PUBLIC_CHK_NULL_RETURN(pTask);

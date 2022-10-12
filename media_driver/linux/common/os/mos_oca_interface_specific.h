@@ -30,8 +30,6 @@
 #include "mos_oca_interface.h"
 #include "mos_interface.h"
 
-#define MOS_OCA_INVALID_BUFFER_HANDLE -1
-
 typedef enum _MOS_OCA_LOG_TYPE
 {
     MOS_OCA_LOG_TYPE_INVALID = 0,
@@ -41,6 +39,7 @@ typedef enum _MOS_OCA_LOG_TYPE
     MOS_OCA_LOG_TYPE_CP_PARAM,
     MOS_OCA_LOG_TYPE_RESOURCE_INFO,
     MOS_OCA_LOG_TYPE_FENCE_INFO,
+    MOS_OCA_LOG_TYPE_CODECHAL_PARAM,
     MOS_OCA_LOG_TYPE_COUNT
 }MOS_OCA_LOG_TYPE;
 
@@ -52,20 +51,9 @@ typedef struct _MOS_OCA_BUFFER_CONFIG
 /****************************************************************************************************/
 /*                                      OCA LOG HEADERS                                             */
 /****************************************************************************************************/
-typedef struct _MOS_OCA_LOG_HEADER_VP_KERNEL_INFO
-{
-    MOS_OCA_LOG_HEADER          header;
-    int                         vpKernelID;
-    int                         fcKernelCount;
-}MOS_OCA_LOG_HEADER_VP_KERNEL_INFO, *PMOS_OCA_LOG_HEADER_VP_KERNEL_INFO;
-
-typedef struct _MOS_OCA_LOG_HEADER_VPHAL_PARAM
-{
-    MOS_OCA_LOG_HEADER          header;
-}MOS_OCA_LOG_HEADER_VPHAL_PARAM, *PMOS_OCA_LOG_HEADER_VPHAL_PARAM;
-
 typedef struct _MOS_OCA_RESOURCE_INFO
 {
+    uint64_t                    gfxAddress;
     uint64_t                    sizeAllocation;
     uint64_t                    sizeSurface;
     uint64_t                    sizeSurfacePhy;
@@ -98,14 +86,6 @@ typedef struct _MOS_OCA_RESOURCE_INFO
     } flags;
 }MOS_OCA_RESOURCE_INFO, *PMOS_OCA_RESOURCE_INFO;
 
-typedef struct _MOS_OCA_LOG_HEADER_RESOURCE_INFO
-{
-    MOS_OCA_LOG_HEADER          header;
-    uint32_t                    resCount;         // Resource count dumped.
-    uint32_t                    resCountSkipped;  // Resource count skiped to be dumped as total count exceeding MOS_OCA_MAX_RESOURCE_INFO_COUNT.
-    // Followed by MOS_OCA_RESOURCE_INFO lists.
-}MOS_OCA_LOG_HEADER_RESOURCE_INFO, *PMOS_OCA_LOG_HEADER_RESOURCE_INFO;
-
 struct MOS_OCA_BUF_CONTEXT
 {
     bool                                inUse                 = false;
@@ -124,8 +104,6 @@ struct MOS_OCA_BUF_CONTEXT
            
 };
 
-#define MAX_NUM_OF_OCA_BUF_CONTEXT 32
-
 class MosOcaAutoLock
 {
 public:
@@ -133,7 +111,7 @@ public:
     {
         if (m_pMutex)
         {
-            MOS_LockMutex(m_pMutex);
+            MosUtilities::MosLockMutex(m_pMutex);
         }
         else
         {
@@ -144,7 +122,7 @@ public:
     {
         if (m_pMutex)
         {
-            MOS_UnlockMutex(m_pMutex);
+            MosUtilities::MosUnlockMutex(m_pMutex);
         }
         else
         {
@@ -403,7 +381,7 @@ private:
 
     PMOS_MUTEX                      m_ocaMutex                                      = nullptr;
 
-    bool                            m_isOcaEnabled                                  = true;
+    bool                            m_isOcaEnabled                                  = false;
     bool                            m_isInitialized                                 = false;
     MOS_OCA_RESOURCE_INFO           *m_resInfoPool                                  = nullptr;  
     MOS_OCA_BUF_CONTEXT             m_ocaBufContextList[MAX_NUM_OF_OCA_BUF_CONTEXT] = {};

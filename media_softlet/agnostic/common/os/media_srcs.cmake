@@ -1,4 +1,4 @@
-# Copyright (c) 2019, Intel Corporation
+# Copyright (c) 2019-2022, Intel Corporation
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the "Software"),
@@ -22,66 +22,58 @@ set(TMP_SOURCES_
     ${CMAKE_CURRENT_LIST_DIR}/mos_context_next.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_graphicsresource_next.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_os_next.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/mos_util_debug_next.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/mos_util_debug.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_utilities_next.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_gpucontext_next.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_gpucontextmgr_next.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_cmdbufmgr_next.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_commandbuffer_next.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/mos_user_setting.cpp
 )
 
 set(TMP_HEADERS_
     ${CMAKE_CURRENT_LIST_DIR}/mos_context_next.h
     ${CMAKE_CURRENT_LIST_DIR}/mos_graphicsresource_next.h
     ${CMAKE_CURRENT_LIST_DIR}/mos_os_next.h
-    ${CMAKE_CURRENT_LIST_DIR}/mos_util_debug_next.h
-    ${CMAKE_CURRENT_LIST_DIR}/mos_utilities_next.h
+    ${CMAKE_CURRENT_LIST_DIR}/mos_util_debug.h
     ${CMAKE_CURRENT_LIST_DIR}/mos_gpucontext_next.h
     ${CMAKE_CURRENT_LIST_DIR}/mos_gpucontextmgr_next.h
     ${CMAKE_CURRENT_LIST_DIR}/mos_cmdbufmgr_next.h
     ${CMAKE_CURRENT_LIST_DIR}/mos_commandbuffer_next.h
-    ${CMAKE_CURRENT_LIST_DIR}/mos_oca_interface_next.h
+    ${CMAKE_CURRENT_LIST_DIR}/mos_interface.h
+    ${CMAKE_CURRENT_LIST_DIR}/mos_user_setting.h
+    ${CMAKE_CURRENT_LIST_DIR}/mos_utilities.h
 )
-
-set(SOURCES_
-    ${SOURCES_}
-    ${TMP_SOURCES_}
- )
-
-set(HEADERS_
-    ${HEADERS_}
-    ${TMP_HEADERS_}
-)
-
-source_group( "MOSNext" FILES ${TMP_SOURCES_} ${TMP_HEADERS_} )
-
 
 if(${Media_Scalability_Supported} STREQUAL "yes")
-
-set(TMP_2_SOURCES_
+set(TMP_SOURCES_
+    ${TMP_SOURCES_}
     ${CMAKE_CURRENT_LIST_DIR}/mos_os_virtualengine_next.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_os_virtualengine_scalability_next.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mos_os_virtualengine_singlepipe_next.cpp
 )
 
-set(TMP_2_HEADERS_
+set(TMP_HEADERS_
+    ${TMP_HEADERS_}
     ${CMAKE_CURRENT_LIST_DIR}/mos_os_virtualengine_next.h
     ${CMAKE_CURRENT_LIST_DIR}/mos_os_virtualengine_scalability_next.h
     ${CMAKE_CURRENT_LIST_DIR}/mos_os_virtualengine_singlepipe_next.h
 )
+endif() #if(${Media_Scalability_Supported} STREQUAL "yes")
 
-set(SOURCES_
-    ${SOURCES_}
-    ${TMP_2_SOURCES_}
+set(MOS_COMMON_SOURCES_
+    ${MOS_COMMON_SOURCES_}
+    ${TMP_SOURCES_}
  )
 
-set(HEADERS_
-    ${HEADERS_}
-    ${TMP_2_HEADERS_}
+set(MOS_COMMON_HEADERS_
+    ${MOS_COMMON_HEADERS_}
+    ${TMP_HEADERS_}
 )
 
-source_group( "MOSNext" FILES ${TMP_2_SOURCES_} ${TMP_2_HEADERS_} )
+set(MOS_PUBLIC_INCLUDE_DIRS_
+    ${MOS_PUBLIC_INCLUDE_DIRS_}
+    ${CMAKE_CURRENT_LIST_DIR}
+)
 
-endif()
-
-media_add_curr_to_include_path()
+source_group( "MOSNext" FILES ${TMP_SOURCES_} ${TMP_HEADERS_} )

@@ -233,7 +233,8 @@ VAStatus DdiEncodeVp9::EncodeInCodecHal(uint32_t numSlices)
         seqParams->RateControlMethod = RATECONTROL_CQL;
     }
 
-    seqParams->TargetUsage = vp9TargetUsage;
+    if (m_encodeCtx->bNewSeq)
+        seqParams->TargetUsage = vp9TargetUsage;
 
     /* If the segmentation is not enabled, the SegData will be reset */
     if (vp9PicParam->PicFlags.fields.segmentation_enabled == 0)
@@ -336,7 +337,7 @@ VAStatus DdiEncodeVp9::ContextInitialize(CodechalSetting *codecHalSettings)
     codecHalSettings->lumaChromaDepth = CODECHAL_LUMA_CHROMA_DEPTH_8_BITS;
     if (m_is10Bit)
     {
-        codecHalSettings->lumaChromaDepth |= CODECHAL_LUMA_CHROMA_DEPTH_10_BITS;
+        codecHalSettings->lumaChromaDepth = CODECHAL_LUMA_CHROMA_DEPTH_10_BITS;
     }
 
     VAStatus vaStatus = VA_STATUS_SUCCESS;

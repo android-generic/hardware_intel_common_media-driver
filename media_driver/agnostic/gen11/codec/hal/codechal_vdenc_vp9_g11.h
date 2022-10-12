@@ -45,17 +45,13 @@
 #include "codechal_encode_singlepipe_virtualengine.h"
 #include "codechal_encode_scalability.h"
 
-#define CODECHAL_ENCODE_HME_FIRST_STEP_G11 0
-#define CODECHAL_ENCODE_HME_FOLLOWING_STEP_G11 1
-#define CODECHAL_ENCODE_MV_SHIFT_FACTOR_32x_G11 1
-#define CODECHAL_ENCODE_MV_SHIFT_FACTOR_16x_G11 2
-#define CODECHAL_ENCODE_MV_SHIFT_FACTOR_4x_G11 2
+#define CODECHAL_ENCODE_HME_FIRST_STEP_G11            0
+#define CODECHAL_ENCODE_HME_FOLLOWING_STEP_G11        1
+#define CODECHAL_ENCODE_MV_SHIFT_FACTOR_32x_G11       1
+#define CODECHAL_ENCODE_MV_SHIFT_FACTOR_16x_G11       2
+#define CODECHAL_ENCODE_MV_SHIFT_FACTOR_4x_G11        2
 #define CODECHAL_ENCODE_PREV_MV_READ_POSITION_16x_G11 1
-#define CODECHAL_ENCODE_PREV_MV_READ_POSITION_4x_G11 0
-
-#define __MEDIA_USER_FEATURE_VALUE_VP9_ENCODE_VDBOX_NUM_ID      5155
-#define __MEDIA_USER_FEATURE_VALUE_VP9_ENCODE_ENABLE_VE_ID      5156
-#define __MEDIA_USER_FEATURE_VALUE_VP9_ENCODE_ENABLE_HW_STITCH  5157
+#define CODECHAL_ENCODE_PREV_MV_READ_POSITION_4x_G11  0
 
 class CodechalVdencVp9StateG11 : public CodechalVdencVp9State
 {
@@ -993,12 +989,12 @@ public:
         return (m_numPipe <= 1) ? 0 : (int)(m_currPass) % (int)m_numPipe;
     }
 
-    int GetCurrentPass()
+    int GetCurrentPass() override
     {
         return (m_numPipe <= 1) ? m_currPass : (int)(m_currPass) / (int)m_numPipe;
     }
 
-    int GetNumPasses()
+    int GetNumPasses() override
     {
         return m_numPassesInOnePipe;
     }
@@ -1013,12 +1009,12 @@ public:
         return (GetCurrentPipe() == 0) ? true : false;
     }
 
-    bool IsFirstPass()
+    bool IsFirstPass() override
     {
         return (GetCurrentPass() == 0) ? true : false;
     }
 
-    bool IsLastPass()
+    bool IsLastPass() override
     {
         return (GetCurrentPass() == m_numPassesInOnePipe) ? true : false;
     }
@@ -1032,7 +1028,8 @@ public:
     {
         return (m_osInterface->pfnGetGpuContext(m_osInterface) == m_renderContext);
     }
-    MOS_STATUS VerifyCommandBufferSize();
+
+    MOS_STATUS VerifyCommandBufferSize() override;
 
     MOS_STATUS GetSystemPipeNumberCommon();
 
@@ -1043,14 +1040,14 @@ public:
         MeSurfaceParams *   params);
 
     MOS_STATUS GetCommandBuffer(
-        PMOS_COMMAND_BUFFER cmdBuffer);
+        PMOS_COMMAND_BUFFER cmdBuffer) override;
 
     MOS_STATUS ReturnCommandBuffer(
-        PMOS_COMMAND_BUFFER cmdBuffer);
+        PMOS_COMMAND_BUFFER cmdBuffer) override;
 
     MOS_STATUS SubmitCommandBuffer(
         PMOS_COMMAND_BUFFER cmdBuffer,
-        bool nullRendering);
+        bool nullRendering) override;
 
     MOS_STATUS SetMeCurbeParams(
         MeCurbeParams* meParams);
@@ -1061,14 +1058,14 @@ public:
     MOS_STATUS SendPrologWithFrameTracking(
         PMOS_COMMAND_BUFFER cmdBuffer,
         bool frameTrackingRequested,
-        MHW_MI_MMIOREGISTERS *mmioRegister = nullptr);
+        MHW_MI_MMIOREGISTERS *mmioRegister = nullptr) override;
 
     MOS_STATUS SetSemaphoreMem(
         PMOS_RESOURCE semaphoreMem,
         PMOS_COMMAND_BUFFER cmdBuffer,
         uint32_t value);
 
-    MOS_STATUS UserFeatureKeyReport();
+    MOS_STATUS UserFeatureKeyReport() override;
 
     MOS_STATUS SendMIAtomicCmd(
         PMOS_RESOURCE               semaMem,
@@ -1083,58 +1080,58 @@ public:
         uint32_t value);
 
     MOS_STATUS ConstructPicStateBatchBuf(
-        PMOS_RESOURCE picStateBuffer);
+        PMOS_RESOURCE picStateBuffer) override;
 
     MOS_STATUS SetDmemHuCPakInt();
 
     MOS_STATUS HuCVp9PakInt(
         PMOS_COMMAND_BUFFER cmdBuffer);
 
-    MOS_STATUS HuCVp9Prob();
+    MOS_STATUS HuCVp9Prob() override;
 
-    MOS_STATUS HuCBrcUpdate();
+    MOS_STATUS HuCBrcUpdate() override;
 
-    MOS_STATUS HuCBrcInitReset();
+    MOS_STATUS HuCBrcInitReset() override;
 
     MOS_STATUS SetHcpPipeBufAddrParams(MHW_VDBOX_PIPE_BUF_ADDR_PARAMS& pipeBufAddrParams,
         PMOS_SURFACE* refSurface,
         PMOS_SURFACE* refSurfaceNonScaled,
         PMOS_SURFACE* dsRefSurface4x,
-        PMOS_SURFACE* dsRefSurface8x);
+        PMOS_SURFACE* dsRefSurface8x) override;
 
     uint16_t GetNumTilesInFrame();
 
-    MOS_STATUS ExecutePictureLevel();
+    MOS_STATUS ExecutePictureLevel() override;
 
-    MOS_STATUS SetSequenceStructs();
+    MOS_STATUS SetSequenceStructs() override;
 
-    MOS_STATUS SetPictureStructs();
+    MOS_STATUS SetPictureStructs() override;
 
-    MOS_STATUS AllocateResources();
+    MOS_STATUS AllocateResources() override;
 
-    void FreeResources();
+    void FreeResources() override;
 
     MOS_STATUS SetCurbeMe(
         MeCurbeParams *params);
 
-    MOS_STATUS ExecuteKernelFunctions();
+    MOS_STATUS ExecuteKernelFunctions() override;
 
     MOS_STATUS ExecuteMeKernel(
         MeCurbeParams *  meParams,
         MeSurfaceParams *meSurfaceParams,
-        HmeLevel         hmeLevel);
+        HmeLevel         hmeLevel) override;
 
-    MOS_STATUS SetupSegmentationStreamIn();
+    MOS_STATUS SetupSegmentationStreamIn() override;
 
-    void SetHcpPipeModeSelectParams(MHW_VDBOX_PIPE_MODE_SELECT_PARAMS& pipeModeSelectParams);
+    void SetHcpPipeModeSelectParams(MHW_VDBOX_PIPE_MODE_SELECT_PARAMS& pipeModeSelectParams) override;
 
-    void SetHcpIndObjBaseAddrParams(MHW_VDBOX_IND_OBJ_BASE_ADDR_PARAMS& indObjBaseAddrParams);
+    void SetHcpIndObjBaseAddrParams(MHW_VDBOX_IND_OBJ_BASE_ADDR_PARAMS& indObjBaseAddrParams) override;
 
-    MOS_STATUS ExecuteSliceLevel();
+    MOS_STATUS ExecuteSliceLevel() override;
 
-    MOS_STATUS ExecuteDysSliceLevel();
+    MOS_STATUS ExecuteDysSliceLevel() override;
 
-    MOS_STATUS Initialize(CodechalSetting * settings);
+    MOS_STATUS Initialize(CodechalSetting * settings) override;
 
     MOS_STATUS InitKernelStates();
 
@@ -1146,18 +1143,18 @@ public:
 
     MOS_STATUS SetTileData();
 
-    MOS_STATUS SetGpuCtxCreatOption();
+    MOS_STATUS SetGpuCtxCreatOption() override;
 
     MOS_STATUS SetTileCommands(
         PMOS_COMMAND_BUFFER cmdBuffer);
 
     MOS_STATUS GetStatusReport(
         EncodeStatus*       encodeStatus,
-        EncodeStatusReport* encodeStatusReport);
+        EncodeStatusReport* encodeStatusReport) override;
 
     MOS_STATUS DecideEncodingPipeNumber();
 
-    MOS_STATUS PlatformCapabilityCheck();
+    MOS_STATUS PlatformCapabilityCheck() override;
 
     uint32_t GetSegmentBlockIndexInFrame(
         uint32_t frameWidth,
@@ -1172,14 +1169,14 @@ public:
         uint32_t currTileStartYInFrame,
         uint32_t currTileStartXInFrame);
 
-    MOS_STATUS CalculateVdencPictureStateCommandSize();
+    MOS_STATUS CalculateVdencPictureStateCommandSize() override;
 
     PMHW_VDBOX_PIPE_BUF_ADDR_PARAMS CreateHcpPipeBufAddrParams(
-        PMHW_VDBOX_PIPE_BUF_ADDR_PARAMS pipeBufAddrParams);
+        PMHW_VDBOX_PIPE_BUF_ADDR_PARAMS pipeBufAddrParams) override;
 
     MOS_STATUS UpdateCmdBufAttribute(
         PMOS_COMMAND_BUFFER cmdBuffer,
-        bool                renderEngineInUse);
+        bool                renderEngineInUse) override;
 
     //!
     //! \brief    Set And Populate VE Hint parameters

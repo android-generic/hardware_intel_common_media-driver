@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020, Intel Corporation
+* Copyright (c) 2020-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,8 @@
 //!
 
 #include "media_copy.h"
-#include "vphal_debug.h"
+#include "media_copy_common.h"
+#include "vp_dumper.h"
 
 MediaCopyBaseState::MediaCopyBaseState():
     m_osInterface(nullptr)
@@ -37,21 +38,6 @@ MediaCopyBaseState::MediaCopyBaseState():
 MediaCopyBaseState::~MediaCopyBaseState()
 {
     MOS_STATUS              eStatus;
-
-    if (m_mhwInterfaces)
-    {
-        if (m_mhwInterfaces->m_cpInterface)
-        {
-            Delete_MhwCpInterface(m_mhwInterfaces->m_cpInterface);
-            m_mhwInterfaces->m_cpInterface = nullptr;
-        }
-        MOS_Delete(m_mhwInterfaces->m_miInterface);
-        MOS_Delete(m_mhwInterfaces->m_veboxInterface);
-        MOS_Delete(m_mhwInterfaces->m_bltInterface);
-        MOS_Delete(m_mhwInterfaces->m_renderInterface);
-        MOS_Delete(m_mhwInterfaces);
-        m_mhwInterfaces = nullptr;
-    }
 
     if (m_osInterface)
     {
@@ -82,7 +68,7 @@ MediaCopyBaseState::~MediaCopyBaseState()
 //! \return   MOS_STATUS
 //!           Return MOS_STATUS_SUCCESS if success, otherwise return failed.
 //!
-MOS_STATUS MediaCopyBaseState::Initialize(PMOS_INTERFACE osInterface, MhwInterfaces *mhwInterfaces)
+MOS_STATUS MediaCopyBaseState::Initialize(PMOS_INTERFACE osInterface)
 {
     if (m_inUseGPUMutex == nullptr)
     {
@@ -93,7 +79,7 @@ MOS_STATUS MediaCopyBaseState::Initialize(PMOS_INTERFACE osInterface, MhwInterfa
    #if (_DEBUG || _RELEASE_INTERNAL)
     if (m_surfaceDumper == nullptr)
     {
-       m_surfaceDumper = MOS_New(VphalSurfaceDumper, osInterface);
+       m_surfaceDumper = MOS_New(VpSurfaceDumper, osInterface);
        MOS_OS_CHK_NULL_RETURN(m_surfaceDumper);
     }
    #endif
@@ -114,10 +100,13 @@ MOS_STATUS MediaCopyBaseState::CapabilityCheck()
     m_mcpyEngineCaps.engineBlt    = 1;
     m_mcpyEngineCaps.engineRender = 1;
 
+    // derivate class specific check. include HW engine avaliable check.
+    MCPY_CHK_STATUS_RETURN(FeatureSupport(m_mcpySrc.OsRes, m_mcpyDst.OsRes, m_mcpySrc, m_mcpyDst, m_mcpyEngineCaps));
+
     // common policy check
     // legal check
     // Blt engine does not support protection, allow the copy if dst is staging buffer in system mem
-    if (m_mcpySrc.CpMode == MCPY_CPMODE_CP && m_mcpyDst.CpMode == MCPY_CPMODE_CLEAR && !m_allowBltCopy)
+    if (m_mcpySrc.CpMode == MCPY_CPMODE_CP && m_mcpyDst.CpMode == MCPY_CPMODE_CLEAR && !m_allowCPBltCopy)
     {
         MCPY_ASSERTMESSAGE("illegal usage");
         return MOS_STATUS_INVALID_PARAMETER;
@@ -125,7 +114,6 @@ MOS_STATUS MediaCopyBaseState::CapabilityCheck()
 
     // vebox cap check.
     if (!IsVeboxCopySupported(m_mcpySrc.OsRes, m_mcpyDst.OsRes) || // format check, implemented on Gen derivate class.
-        (m_mcpyDst.CompressionMode == MOS_MMC_RC) || // compression check
         m_mcpySrc.bAuxSuface)
     {
          m_mcpyEngineCaps.engineVebox = false;
@@ -133,21 +121,10 @@ MOS_STATUS MediaCopyBaseState::CapabilityCheck()
 
     // Eu cap check.
     if (!RenderFormatSupportCheck(m_mcpySrc.OsRes, m_mcpyDst.OsRes) || // format check, implemented on Gen derivate class.
-        (m_mcpyDst.CompressionMode == MOS_MMC_MC) ||
         m_mcpySrc.bAuxSuface)
     {
         m_mcpyEngineCaps.engineRender = false;
     }
-
-    // blt check.
-    if ((m_mcpySrc.CompressionMode != MOS_MMC_DISABLED) ||
-        (m_mcpyDst.CompressionMode != MOS_MMC_DISABLED))
-    {
-        m_mcpyEngineCaps.engineBlt = false;
-    }
-
-    // derivate class specific check. include HW engine avaliable check.
-    FeatureSupport(m_mcpySrc.OsRes, m_mcpyDst.OsRes, m_mcpySrc, m_mcpyDst, m_mcpyEngineCaps);
 
     if (!m_mcpyEngineCaps.engineVebox && !m_mcpyEngineCaps.engineBlt && !m_mcpyEngineCaps.engineRender)
     {
@@ -186,7 +163,8 @@ MOS_STATUS MediaCopyBaseState::CopyEnigneSelect(MCPY_METHOD preferMethod)
     switch (preferMethod)
     {
         case MCPY_METHOD_PERFORMANCE:
-            m_mcpyEngine = m_mcpyEngineCaps.engineRender?MCPY_ENGINE_RENDER:(m_mcpyEngineCaps.engineVebox?MCPY_ENGINE_VEBOX:MCPY_ENGINE_BLT);
+        case MCPY_METHOD_DEFAULT:
+            m_mcpyEngine = m_mcpyEngineCaps.engineRender?MCPY_ENGINE_RENDER:(m_mcpyEngineCaps.engineBlt ? MCPY_ENGINE_BLT : MCPY_ENGINE_VEBOX);
             break;
         case MCPY_METHOD_BALANCE:
             m_mcpyEngine = m_mcpyEngineCaps.engineVebox?MCPY_ENGINE_VEBOX:(m_mcpyEngineCaps.engineBlt?MCPY_ENGINE_BLT:MCPY_ENGINE_RENDER);
@@ -218,14 +196,14 @@ MOS_STATUS MediaCopyBaseState::SurfaceCopy(PMOS_RESOURCE src, PMOS_RESOURCE dst,
     MOS_SURFACE ResDetails;
     MOS_ZeroMemory(&ResDetails, sizeof(MOS_SURFACE));
     MCPY_CHK_STATUS_RETURN(m_osInterface->pfnGetResourceInfo(m_osInterface, src, &ResDetails));
-    m_mcpySrc.CompressionMode = ResDetails.CompressionMode;
+    MCPY_CHK_STATUS_RETURN(m_osInterface->pfnGetMemoryCompressionMode(m_osInterface, src, (PMOS_MEMCOMP_STATE)&(m_mcpySrc.CompressionMode)));
     m_mcpySrc.CpMode          = src->pGmmResInfo->GetSetCpSurfTag(false, 0)?MCPY_CPMODE_CP:MCPY_CPMODE_CLEAR;
     m_mcpySrc.TileMode        = ResDetails.TileType;
     m_mcpySrc.OsRes           = src;
 
     MOS_ZeroMemory(&ResDetails, sizeof(MOS_SURFACE));
     MCPY_CHK_STATUS_RETURN(m_osInterface->pfnGetResourceInfo(m_osInterface, dst, &ResDetails));
-    m_mcpyDst.CompressionMode = ResDetails.CompressionMode;
+    MCPY_CHK_STATUS_RETURN(m_osInterface->pfnGetMemoryCompressionMode(m_osInterface,dst, (PMOS_MEMCOMP_STATE) &(m_mcpyDst.CompressionMode)));
     m_mcpyDst.CpMode          = dst->pGmmResInfo->GetSetCpSurfTag(false, 0)?MCPY_CPMODE_CP:MCPY_CPMODE_CLEAR;
     m_mcpyDst.TileMode        = ResDetails.TileType;
     m_mcpyDst.OsRes           = dst;
@@ -298,6 +276,16 @@ MOS_STATUS MediaCopyBaseState::TaskDispatch()
             eStatus = MediaVeboxCopy(m_mcpySrc.OsRes, m_mcpyDst.OsRes);
             break;
         case MCPY_ENGINE_BLT:
+            if ((m_mcpySrc.TileMode != MOS_TILE_LINEAR) && (m_mcpySrc.CompressionMode != MOS_MMC_DISABLED))
+            {
+                MCPY_NORMALMESSAGE("mmc on, m_mcpySrc.TileMode= %d, m_mcpySrc.CompressionMode = %d", m_mcpySrc.TileMode, m_mcpySrc.CompressionMode);
+                eStatus = m_osInterface->pfnDecompResource(m_osInterface, m_mcpySrc.OsRes);
+                if (MOS_STATUS_SUCCESS != eStatus)
+                {
+                    MosUtilities::MosUnlockMutex(m_inUseGPUMutex);
+                    MCPY_CHK_STATUS_RETURN(eStatus);
+                }
+            }
             eStatus = MediaBltCopy(m_mcpySrc.OsRes, m_mcpyDst.OsRes);
             break;
         case MCPY_ENGINE_RENDER:
@@ -310,7 +298,7 @@ MOS_STATUS MediaCopyBaseState::TaskDispatch()
 
 #if (_DEBUG || _RELEASE_INTERNAL)
     char *CopyEngine = (char *)(m_mcpyEngine?(m_mcpyEngine == MCPY_ENGINE_BLT?"BLT":"Render"):"VeBox");
-    WriteUserFeatureString(__MEDIA_USER_FEATURE_MCPY_MODE_ID, CopyEngine, strlen(CopyEngine), nullptr);
+    WriteUserFeatureString(__MEDIA_USER_FEATURE_MCPY_MODE_ID, CopyEngine, strlen(CopyEngine), m_osInterface->pOsContext);
 #endif
     MCPY_NORMALMESSAGE("Media Copy works on %s Engine", m_mcpyEngine?(m_mcpyEngine == MCPY_ENGINE_BLT?"BLT":"Render"):"VeBox");
 

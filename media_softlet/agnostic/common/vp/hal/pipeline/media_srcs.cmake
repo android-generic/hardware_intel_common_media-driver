@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2020, Intel Corporation
+# Copyright (c) 2019-2022, Intel Corporation
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the "Software"),
@@ -22,6 +22,9 @@ set(TMP_SOURCES_
     ${CMAKE_CURRENT_LIST_DIR}/vp_pipeline.cpp
     ${CMAKE_CURRENT_LIST_DIR}/vp_pipeline_adapter.cpp
     ${CMAKE_CURRENT_LIST_DIR}/vp_pipeline_adapter_base.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/vp_feature_report.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/vp_base.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/vp_pipeline_adapter_legacy.cpp
 )
 
 set(TMP_HEADERS_
@@ -29,28 +32,22 @@ set(TMP_HEADERS_
     ${CMAKE_CURRENT_LIST_DIR}/vp_pipeline_common.h
     ${CMAKE_CURRENT_LIST_DIR}/vp_pipeline_adapter.h
     ${CMAKE_CURRENT_LIST_DIR}/vp_pipeline_adapter_base.h
+    ${CMAKE_CURRENT_LIST_DIR}/vp_feature_report.h
+    ${CMAKE_CURRENT_LIST_DIR}/vp_base.h
+    ${CMAKE_CURRENT_LIST_DIR}/vp_pipeline_adapter_legacy.h
 )
 
-set(SOURCES_
-    ${SOURCES_}
+set(VP_SOURCES_
+    ${VP_SOURCES_}
     ${TMP_SOURCES_}
 )
 
-set(HEADERS_
-    ${HEADERS_}
-    ${TMP_HEADERS_}
-)
-
-set(COMMON_SOURCES_
-    ${COMMON_SOURCES_}
-    ${TMP_SOURCES_}
-)
-
-set(COMMON_HEADERS_
-    ${COMMON_HEADERS_}
+set(VP_HEADERS_
+    ${VP_HEADERS_}
     ${TMP_HEADERS_}
 )
 
 source_group( VpHalNext\\Shared FILES ${TMP_SOURCES_} ${TMP_HEADERS_})
-
+set(TMP_SOURCES_ "")
+set(TMP_HEADERS_ "")
 media_add_curr_to_include_path()

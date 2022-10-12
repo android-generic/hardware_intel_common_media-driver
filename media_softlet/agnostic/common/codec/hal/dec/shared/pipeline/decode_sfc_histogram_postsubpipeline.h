@@ -30,7 +30,7 @@
 
 #include "decode_sub_pipeline.h"
 #include "decode_basic_feature.h"
-#include "decode_huc_copy_packet.h"
+#include "decode_huc_copy_packet_itf.h"
 #include "decode_downsampling_feature.h"
 
 #ifdef _DECODE_PROCESSING_SUPPORTED
@@ -103,9 +103,11 @@ protected:
 private:
     DecodeBasicFeature*             m_basicFeature      = nullptr; //!< Decode basic feature
     DecodeAllocator*                m_allocator         = nullptr; //!< Resource allocator
-    HucCopyPkt *                    m_copyPkt           = nullptr; //!< Bitstream concat packet
+    HucCopyPktItf *                 m_copyPkt           = nullptr;  //!< Bitstream concat packet
     PMOS_INTERFACE                  m_osInterface       = nullptr; //!< MOS interface
     DecodeDownSamplingFeature*      m_downsampFeature   = nullptr; //!< Downsampling feature
+
+MEDIA_CLASS_DEFINE_END(decode__DecodeSfcHistogramSubPipeline)
 };
 
 }  // namespace decode

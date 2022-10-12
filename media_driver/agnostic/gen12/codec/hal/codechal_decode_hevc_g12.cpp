@@ -583,9 +583,15 @@ MOS_STATUS CodechalDecodeHevcG12::SetHucDmemParams (
     CODECHAL_DECODE_CHK_NULL_RETURN(dmemBuffer);
 
     CodechalResLock DmemLock(m_osInterface, dmemBuffer);
-    auto hucHevcS2LBss = (PHUC_HEVC_S2L_BSS_G12)DmemLock.Lock(CodechalResLock::writeOnly);
+
+    PHUC_HEVC_S2L_BSS_G12 hucHevcS2LBss = (PHUC_HEVC_S2L_BSS_G12)DmemLock.Lock(CodechalResLock::writeOnly);
 
     CODECHAL_DECODE_CHK_NULL_RETURN(hucHevcS2LBss);
+    hucHevcS2LBss->PictureBss.reserve.reserve_0 = 0;
+    hucHevcS2LBss->PictureBss.reserve.reserve_1 = 0;
+    hucHevcS2LBss->PictureBss.reserve.reserve_2 = 0;
+    hucHevcS2LBss->PictureBss.reserve.reserve_3 = 0;
+
     hucHevcS2LBss->ProductFamily = m_hucInterface->GetHucProductFamily();
     hucHevcS2LBss->RevId = m_hwInterface->GetPlatform().usRevId;
     hucHevcS2LBss->DummyRefIdxState = 
@@ -715,7 +721,18 @@ MOS_STATUS CodechalDecodeHevcG12::SetFrameStates ()
     if (m_shortFormatInUse && m_frameIdx < 3 && m_statusQueryReportingEnabled &&
         (((m_decodeStatusBuf.m_decodeStatus->m_hucErrorStatus2 >> 32) & m_hucInterface->GetHucStatus2ImemLoadedMask()) == 0))
     {
+        if (!m_reportHucStatus)
+        {
+            MOS_USER_FEATURE_VALUE_WRITE_DATA userFeatureWriteData;
+            MOS_ZeroMemory(&userFeatureWriteData, sizeof(userFeatureWriteData));
+            userFeatureWriteData.Value.i32Data = true;
+            userFeatureWriteData.ValueID       = __MEDIA_USER_FEATURE_VALUE_HUC_LOAD_STATUS_ID;
+            MOS_UserFeature_WriteValues_ID(nullptr, &userFeatureWriteData, 1, m_osInterface->pOsContext);
+            m_reportHucStatus = true;
+        }
+
         CODECHAL_DECODE_ASSERTMESSAGE("HuC IMEM Loaded fails");
+        MT_ERR1(MT_DEC_HEVC, MT_DEC_HUC_ERROR_STATUS2, (m_decodeStatusBuf.m_decodeStatus->m_hucErrorStatus2 >> 32));
         return MOS_STATUS_UNKNOWN;
     }
 
@@ -752,10 +769,7 @@ MOS_STATUS CodechalDecodeHevcG12::SetFrameStates ()
         m_resDataBuffer = *(m_decodeParams.m_dataBuffer);
     }
 
-    if (m_hevcPicParams->RequestCRC)
-    {
-        m_reportFrameCrc = true;
-    }
+    m_reportFrameCrc = true;
 
     CODECHAL_DECODE_CHK_STATUS_RETURN(CheckAndCopyBitstream());
 
@@ -969,6 +983,15 @@ MOS_STATUS CodechalDecodeHevcG12::SetFrameStates ()
     m_crrPic = m_hevcPicParams->CurrPic;
     m_secondField =
         CodecHal_PictureIsBottomField(m_hevcPicParams->CurrPic);
+
+    m_pCodechalOcaDumper->SetHevcDecodeParam(
+        m_hevcPicParams,
+        m_hevcExtPicParams,
+        m_hevcSccPicParams,
+        m_hevcSliceParams,
+        m_hevcExtSliceParams,
+        m_numSlices,
+        m_shortFormatInUse);
 
     CODECHAL_DEBUG_TOOL(
         m_debugInterface->m_currPic     = m_crrPic;
@@ -2163,10 +2186,13 @@ MOS_STATUS CodechalDecodeHevcG12::DecodePrimitiveLevel()
     if (MOS_VE_SUPPORTED(m_osInterface) && CodecHalDecodeScalabilityIsScalableMode(m_scalabilityState))
     {
         submitCommand = CodecHalDecodeScalabilityIsToSubmitCmdBuffer_G12(m_scalabilityState);
+
+        HalOcaInterface::DumpCodechalParam(scdryCmdBuffer, *m_osInterface->pOsContext, m_pCodechalOcaDumper, CODECHAL_HEVC);
         HalOcaInterface::On1stLevelBBEnd(scdryCmdBuffer, *m_osInterface);
     }
     else
     {
+        HalOcaInterface::DumpCodechalParam(primCmdBuffer, *m_osInterface->pOsContext, m_pCodechalOcaDumper, CODECHAL_HEVC);
         HalOcaInterface::On1stLevelBBEnd(primCmdBuffer, *m_osInterface);
     }
 
@@ -2259,6 +2285,11 @@ MOS_STATUS CodechalDecodeHevcG12::InitMmcState()
     m_mmc = MOS_New(CodechalMmcDecodeHevcG12, m_hwInterface, this);
     CODECHAL_DECODE_CHK_NULL_RETURN(m_mmc);
 #endif
+    if (m_osInterface->pfnIsMismatchOrderProgrammingSupported())
+    {
+        m_mmc->SetMmcDisabled();
+    }
+
     return MOS_STATUS_SUCCESS;
 }
 
@@ -2272,10 +2303,6 @@ MOS_STATUS CodechalDecodeHevcG12::AllocateStandard (
     CODECHAL_DECODE_CHK_NULL_RETURN(settings);
 
     CODECHAL_DECODE_CHK_STATUS_RETURN(InitMmcState());
-
-#if (_DEBUG || _RELEASE_INTERNAL)
-    m_debugInterface->SetSWCrcMode(true);
-#endif
 
     m_width                         = settings->width;
     m_height                        = settings->height;

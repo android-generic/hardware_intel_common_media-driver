@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2021, Intel Corporation
+* Copyright (c) 2019-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -70,6 +70,7 @@ enum FeatureType
     FeatureTypeScalingOnRender  = FeatureTypeScaling | FEATURE_TYPE_ENGINE_BITS_RENDER,
     FeatureTypeDn               = 0x400,
     FeatureTypeDnOnVebox        = FeatureTypeDn | FEATURE_TYPE_ENGINE_BITS_VEBOX,
+    FeatureTypeDnHVSCalOnRender = FeatureTypeDn | FEATURE_TYPE_ENGINE_BITS_RENDER | FEATURE_TYPE_ENGINE_BITS_SUB_STEP,
     FeatureTypeDi               = 0x500,
     FeatureTypeDiOnVebox        = FeatureTypeDi | FEATURE_TYPE_ENGINE_BITS_VEBOX,
     FeatureTypeDiOnRender       = FeatureTypeDi | FEATURE_TYPE_ENGINE_BITS_RENDER,
@@ -89,6 +90,7 @@ enum FeatureType
     FeatureTypeCgcOnVebox       = FeatureTypeCgc | FEATURE_TYPE_ENGINE_BITS_VEBOX,
     FeatureTypeHdr              = 0xC00,
     FeatureTypeHdrOnVebox       = FeatureTypeHdr | FEATURE_TYPE_ENGINE_BITS_VEBOX,
+    FeatureTypeHdr3DLutCalOnRender = FeatureTypeHdr | FEATURE_TYPE_ENGINE_BITS_RENDER | FEATURE_TYPE_ENGINE_BITS_SUB_STEP,
     FeatureTypeFD               = 0xD00,
     FeatureTypeFLD              = 0xE00,
     FeatureTypeFB               = 0xF00,
@@ -113,9 +115,16 @@ enum FeatureType
     FeatureTypeColorFillOnRender = FeatureTypeColorFill | FEATURE_TYPE_ENGINE_BITS_RENDER,
     FeatureTypeAlpha            = 0x1900,
     FeatureTypeAlphaOnSfc       = FeatureTypeAlpha | FEATURE_TYPE_ENGINE_BITS_SFC,
+    FeatureTypeAlphaOnVebox     = FeatureTypeAlpha | FEATURE_TYPE_ENGINE_BITS_VEBOX,
     FeatureTypeAlphaOnRender    = FeatureTypeAlpha | FEATURE_TYPE_ENGINE_BITS_RENDER,
     FeatureTypeCappipe          = 0x2000,
     FeatureTypeCappipeOnVebox   = FeatureTypeCappipe | FEATURE_TYPE_ENGINE_BITS_VEBOX,
+    FeatureTypeCappipeOnRender  = FeatureTypeCappipe | FEATURE_TYPE_ENGINE_BITS_RENDER,
+    FeatureTypeFDFB             = 0x2100,
+    FeatureTypeFDFBOnVebox      = FeatureTypeFDFB | FEATURE_TYPE_ENGINE_BITS_VEBOX,
+    FeatureTypeFDFBOnRender     = FeatureTypeFDFB | FEATURE_TYPE_ENGINE_BITS_RENDER,
+    FeatureTypeSegmentation     = 0x2200,
+    FeatureTypeSegmentationOnRender = FeatureTypeSegmentation | FEATURE_TYPE_ENGINE_BITS_RENDER,
     // ...
     NumOfFeatureType
 };
@@ -144,7 +153,8 @@ enum SurfaceType
     SurfaceTypeLaceLut,
     SurfaceTypeStatistics,
     SurfaceTypeSkinScore,
-    SurfaceType3dLut,
+    SurfaceType3DLut,
+    SurfaceType1k1dLut,
     SurfaceType1dLutHDR,
     SurfaceTypeAlphaOrVignette,
     SurfaceTypeVeboxStateHeap_Drv,
@@ -163,28 +173,547 @@ enum SurfaceType
     SurfaceTypePwlfOut,
     SurfaceTypeWeitCoef,
     SurfaceTypGlobalToneMappingCurveLUT,
+    // FC
+    SurfaceTypeFcInputLayer0,
+    SurfaceTypeFcInputLayer1,
+    SurfaceTypeFcInputLayer2,
+    SurfaceTypeFcInputLayer3,
+    SurfaceTypeFcInputLayer4,
+    SurfaceTypeFcInputLayer5,
+    SurfaceTypeFcInputLayer6,
+    SurfaceTypeFcInputLayer7,
+    SurfaceTypeFcInputLayerMax = SurfaceTypeFcInputLayer7,
+    SurfaceTypeFcInputLayer0Field1Dual,
+    SurfaceTypeFcInputLayer1Field1Dual,
+    SurfaceTypeFcInputLayer2Field1Dual,
+    SurfaceTypeFcInputLayer3Field1Dual,
+    SurfaceTypeFcInputLayer4Field1Dual,
+    SurfaceTypeFcInputLayer5Field1Dual,
+    SurfaceTypeFcInputLayer6Field1Dual,
+    SurfaceTypeFcInputLayer7Field1Dual,
+    SurfaceTypeFcInputLayerMaxField1Dual = SurfaceTypeFcInputLayer7Field1Dual,
+    SurfaceTypeFcTarget0,
+    SurfaceTypeFcTarget1,
+    SurfaceTypeFcCscCoeff,
+    // LGCA related Surfaces
+    SurfaceTypeSamplerSurfaceR,
+    SurfaceTypeSamplerSurfaceG,
+    SurfaceTypeSamplerSurfaceB,
+    SurfaceTypeOutputSurfaceR,
+    SurfaceTypeOutputSurfaceG,
+    SurfaceTypeOutputSurfaceB,
+    SurfaceTypeSamplerParamsMinMax,
+    // 3DLut Kernel
+    SurfaceType3DLut2D,
+    SurfaceType3DLutCoef,
+    // FDFB
+    SurfaceTypeFDFBSrcHandle,
+    SurfaceTypeFDFBOutFaceBuffer,
+    SurfaceTypeFDFBOutFaceCountBuffer,
+    SurfaceTypeFDFBOutFaceViewBuffer,
+    SurfaceTypeFDFBFrameCount,
+    SurfaceTypeFDFBFaceFlag,
+    SurfaceTypeFDFBValidatorFlag,
+    SurfaceTypeFDFBSkipFB,
+    SurfaceTypeFDFBConfidenceOut,
+    SurfaceTypeFDFBExitFlag,
+    SurfaceTypeFDFBFDExitFlag,
+    SurfaceTypeFDFBStrength2,
+    SurfaceTypeFDFBRemappedLM,
+    SurfaceTypeFDFBPostProcessingOutCur,
+    SurfaceTypeFDFBPreFaceCountBuffer,
+    //FD
+    SurfaceTypeFDLutListBuffer,
+    SurfaceTypeFDLutListBuffer2,
+    SurfaceTypeFDLutListBuffer3,
+    SurfaceTypeFDLutListBuffer4,
+    SurfaceTypeFDLutListBuffer5,
+    SurfaceTypeFDLutListBuffer6,
+    SurfaceTypeFDLutListBuffer7,
+    SurfaceTypeFDLutListBuffer8,
+    SurfaceTypeFDLutListBuffer9,
+    SurfaceTypeFDLutListBuffer10,
+    SurfaceTypeFDLutListBuffer11,
+    SurfaceTypeFDLutListBuffer12,
+    SurfaceTypeFDLutListBuffer13,
+    SurfaceTypeFDLutListBuffer14,
+    SurfaceTypeFDLutListBuffer15,
+    SurfaceTypeFDLutListBuffer16,
+    SurfaceTypeFDLutListBuffer17,
+    SurfaceTypeFDLutListBuffer18,
+    SurfaceTypeFDLutListBuffer19,
+    SurfaceTypeFDLutListBuffer20,
+    SurfaceTypeFDLutListBuffer21,
+    SurfaceTypeFDLutListBuffer22,
+    SurfaceTypeFDLutListBuffer23,
+    SurfaceTypeFDLutListBuffer24,
+    SurfaceTypeFDLutListBuffer25,
+    SurfaceTypeFDLutListBuffer26,
+    SurfaceTypeFDLutListBuffer27,
+    SurfaceTypeFDLutListBuffer28,
+    SurfaceTypeFDLutListBuffer29,
+    SurfaceTypeFDLutListBuffer30,
+    SurfaceTypeFDLutListBuffer31,
+    SurfaceTypeFDLutListBuffer32,
+    SurfaceTypeFDLutListBuffer33,
+    SurfaceTypeFDLutListBuffer34,
+    SurfaceTypeFDLutListBuffer35,
+    SurfaceTypeFDLutListBuffer36,
+    SurfaceTypeFDLutListBuffer37,
+    SurfaceTypeFDLutListBuffer38,
+    SurfaceTypeFDLutListBuffer39,
+    SurfaceTypeFDLutListBuffer40,
+    SurfaceTypeFDLutListBuffer41,
+    SurfaceTypeFDLutListBuffer42,
+    SurfaceTypeFDLutListBuffer43,
+    SurfaceTypeFDLutListBuffer44,
+    SurfaceTypeFDLutListBuffer45,
+    SurfaceTypeFDLutListBuffer46,
+    SurfaceTypeFDLutListBuffer47,
+    SurfaceTypeFDLutListBuffer48,
+    SurfaceTypeFDLutListBuffer49,
+    SurfaceTypeFDLutListBuffer50,
+    SurfaceTypeFDLutListBuffer51,
+    SurfaceTypeFDLutListBuffer52,
+    SurfaceTypeFDLutListBuffer53,
+    SurfaceTypeFDLutListBuffer54,
+    SurfaceTypeFDLutListBuffer55,
+    SurfaceTypeFDLutListBuffer56,
+    SurfaceTypeFDLutListBuffer57,
+    SurfaceTypeFDLutListBuffer58,
+    SurfaceTypeFDLutListBuffer59,
+    SurfaceTypeFDLutListBuffer60,
+    SurfaceTypeFDLutListBuffer61,
+    SurfaceTypeFDLutListBuffer62,
+    SurfaceTypeFDLutListBuffer63,
+    SurfaceTypeFDLutListBuffer64,
+    SurfaceTypeFDLutCounterBuffer,
+    SurfaceTypeFDLutCounterBuffer2,
+    SurfaceTypeFDLutCounterBuffer3,
+    SurfaceTypeFDLutCounterBuffer4,
+    SurfaceTypeFDLutCounterBuffer5,
+    SurfaceTypeFDLutCounterBuffer6,
+    SurfaceTypeFDLutCounterBuffer7,
+    SurfaceTypeFDLutCounterBuffer8,
+    SurfaceTypeFDLutCounterBuffer9,
+    SurfaceTypeFDLutCounterBuffer10,
+    SurfaceTypeFDLutCounterBuffer11,
+    SurfaceTypeFDLutCounterBuffer12,
+    SurfaceTypeFDLutCounterBuffer13,
+    SurfaceTypeFDLutCounterBuffer14,
+    SurfaceTypeFDLutCounterBuffer15,
+    SurfaceTypeFDLutCounterBuffer16,
+    SurfaceTypeFDLutCounterBuffer17,
+    SurfaceTypeFDLutCounterBuffer18,
+    SurfaceTypeFDLutCounterBuffer19,
+    SurfaceTypeFDLutCounterBuffer20,
+    SurfaceTypeFDLutCounterBuffer21,
+    SurfaceTypeFDLutCounterBuffer22,
+    SurfaceTypeFDLutCounterBuffer23,
+    SurfaceTypeFDLutCounterBuffer24,
+    SurfaceTypeFDLutCounterBuffer25,
+    SurfaceTypeFDLutCounterBuffer26,
+    SurfaceTypeFDLutCounterBuffer27,
+    SurfaceTypeFDLutCounterBuffer28,
+    SurfaceTypeFDLutCounterBuffer29,
+    SurfaceTypeFDLutCounterBuffer30,
+    SurfaceTypeFDLutCounterBuffer31,
+    SurfaceTypeFDLutCounterBuffer32,
+    SurfaceTypeFDLutCounterBuffer33,
+    SurfaceTypeFDLutCounterBuffer34,
+    SurfaceTypeFDLutCounterBuffer35,
+    SurfaceTypeFDLutCounterBuffer36,
+    SurfaceTypeFDLutCounterBuffer37,
+    SurfaceTypeFDLutCounterBuffer38,
+    SurfaceTypeFDLutCounterBuffer39,
+    SurfaceTypeFDLutCounterBuffer40,
+    SurfaceTypeFDLutCounterBuffer41,
+    SurfaceTypeFDLutCounterBuffer42,
+    SurfaceTypeFDLutCounterBuffer43,
+    SurfaceTypeFDLutCounterBuffer44,
+    SurfaceTypeFDLutCounterBuffer45,
+    SurfaceTypeFDLutCounterBuffer46,
+    SurfaceTypeFDLutCounterBuffer47,
+    SurfaceTypeFDLutCounterBuffer48,
+    SurfaceTypeFDLutCounterBuffer49,
+    SurfaceTypeFDLutCounterBuffer50,
+    SurfaceTypeFDLutCounterBuffer51,
+    SurfaceTypeFDLutCounterBuffer52,
+    SurfaceTypeFDLutCounterBuffer53,
+    SurfaceTypeFDLutCounterBuffer54,
+    SurfaceTypeFDLutCounterBuffer55,
+    SurfaceTypeFDLutCounterBuffer56,
+    SurfaceTypeFDLutCounterBuffer57,
+    SurfaceTypeFDLutCounterBuffer58,
+    SurfaceTypeFDLutCounterBuffer59,
+    SurfaceTypeFDLutCounterBuffer60,
+    SurfaceTypeFDLutCounterBuffer61,
+    SurfaceTypeFDLutCounterBuffer62,
+    SurfaceTypeFDLutCounterBuffer63,
+    SurfaceTypeFDLutCounterBuffer64,
+    SurfaceTypeFDFaceListBuffer,
+    SurfaceTypeFDFaceListBuffer2,
+    SurfaceTypeFDFaceListBuffer3,
+    SurfaceTypeFDFaceListBuffer4,
+    SurfaceTypeFDFaceListBuffer5,
+    SurfaceTypeFDFaceCounterBuffer,
+    SurfaceTypeFDFaceCounterBuffer2,
+    SurfaceTypeFDFaceCounterBuffer3,
+    SurfaceTypeFDFaceCounterBuffer4,
+    SurfaceTypeFDFaceCounterBuffer5,
+    SurfaceTypeFDLutIntHandle,
+    SurfaceTypeFDLutIntHandle2,
+    SurfaceTypeFDLutIntHandle3,
+    SurfaceTypeFDLutIntHandle4,
+    SurfaceTypeFDLutIntHandle5,
+    SurfaceTypeFDCoordnateHandle,
+    SurfaceTypeFDCoordnateHandle2,
+    SurfaceTypeFDCoordnateHandle3,
+    SurfaceTypeFDCoordnateHandle4,
+    SurfaceTypeFDCoordnateHandle5,
+    SurfaceTypeFDRoundsHandle,
+    SurfaceTypeFDRoundsHandle2,
+    SurfaceTypeFDRoundsHandle3,
+    SurfaceTypeFDRoundsHandle4,
+    SurfaceTypeFDRoundsHandle5,
+    SurfaceTypeFDThresholdHandle,
+    SurfaceTypeFDThresholdHandle2,
+    SurfaceTypeFDThresholdHandle3,
+    SurfaceTypeFDThresholdHandle4,
+    SurfaceTypeFDThresholdHandle5,
+    SurfaceTypeFDFaceGroupCountBuffer,
+    SurfaceTypeFDFaceGroupCountBuffer2,
+    SurfaceTypeFDFaceGroupCountBuffer3,
+    SurfaceTypeFDFaceGroupCountBuffer4,
+    SurfaceTypeFDFaceGroupCountBuffer5,
+    SurfaceTypeFDFaceGroupBuffer,
+    SurfaceTypeFDFaceGroupBuffer2,
+    SurfaceTypeFDFaceGroupBuffer3,
+    SurfaceTypeFDFaceGroupBuffer4,
+    SurfaceTypeFDFaceGroupBuffer5,
+    SurfaceTypeFDOutFaceBuffer,
+    SurfaceTypeFDOutFaceCountBuffer,
+    SurfaceTypeFDOutFaceViewBuffer,
+    SurfaceTypeFDFrameCount,
+    SurfaceTypeFDFaceFlag,
+    SurfaceTypeFDValidatorFlag,
+    SurfaceTypeFDConfidenceOut,
+    SurfaceTypeFDPostProcessingOutCur,
+    SurfaceTypeFDPreFaceCountBuffer,
+    SurfaceTypeFDScaleHandle,
+    SurfaceTypeFDScaleHandle2,
+    SurfaceTypeFDScaleHandle3,
+    SurfaceTypeFDScaleHandle4,
+    SurfaceTypeFDScaleHandle5,
+    SurfaceTypeFDScaleHandle6,
+    SurfaceTypeFDScaleHandle7,
+    SurfaceTypeFDScaleHandle8,
+    SurfaceTypeFDScaleHandle9,
+    SurfaceTypeFDScaleHandle10,
+    SurfaceTypeFDScaleHandle11,
+    SurfaceTypeFDScaleHandle12,
+    SurfaceTypeFDScaleHandle13,
+    SurfaceTypeFDScaleHandle14,
+    SurfaceTypeFDScaleHandle15,
+    SurfaceTypeFDScaleHandle16,
+    SurfaceTypeFDScaleHandle17,
+    SurfaceTypeFDScaleHandle18,
+    SurfaceTypeFDScaleHandle19,
+    SurfaceTypeFDScaleHandle20,
+    SurfaceTypeFDScaleHandle21,
+    SurfaceTypeFDScaleHandle22,
+    SurfaceTypeFDScaleHandle23,
+    SurfaceTypeFDScaleHandle24,
+    SurfaceTypeFDScaleHandle25,
+    SurfaceTypeFDScaleHandle26,
+    SurfaceTypeFDScaleHandle27,
+    SurfaceTypeFDScaleHandle28,
+    SurfaceTypeFDScaleHandle29,
+    SurfaceTypeFDScaleHandle30,
+    SurfaceTypeFDScaleHandle31,
+    SurfaceTypeFDScaleHandle32,
+    SurfaceTypeFDScaleHandle33,
+    SurfaceTypeFDScaleHandle34,
+    SurfaceTypeFDScaleHandle35,
+    SurfaceTypeFDScaleHandle36,
+    SurfaceTypeFDScaleHandle37,
+    SurfaceTypeFDScaleHandle38,
+    SurfaceTypeFDScaleHandle39,
+    SurfaceTypeFDScaleHandle40,
+    SurfaceTypeFDScaleHandle41,
+    SurfaceTypeFDScaleHandle42,
+    SurfaceTypeFDScaleHandle43,
+    SurfaceTypeFDScaleHandle44,
+    SurfaceTypeFDScaleHandle45,
+    SurfaceTypeFDScaleHandle46,
+    SurfaceTypeFDScaleHandle47,
+    SurfaceTypeFDScaleHandle48,
+    SurfaceTypeFDScaleHandle49,
+    SurfaceTypeFDScaleHandle50,
+    SurfaceTypeFDScaleHandle51,
+    SurfaceTypeFDScaleHandle52,
+    SurfaceTypeFDScaleHandle53,
+    SurfaceTypeFDScaleHandle54,
+    SurfaceTypeFDScaleHandle55,
+    SurfaceTypeFDScaleHandle56,
+    SurfaceTypeFDScaleHandle57,
+    SurfaceTypeFDScaleHandle58,
+    SurfaceTypeFDScaleHandle59,
+    SurfaceTypeFDScaleHandle60,
+    SurfaceTypeFDScaleHandle61,
+    SurfaceTypeFDScaleHandle62,
+    SurfaceTypeFDScaleHandle63,
+    SurfaceTypeFDScaleHandle64,
+    SurfaceTypeFDMLbpHandle,
+    SurfaceTypeFDMLbpHandle2,
+    SurfaceTypeFDMLbpHandle3,
+    SurfaceTypeFDMLbpHandle4,
+    SurfaceTypeFDMLbpHandle5,
+    SurfaceTypeFDMLbpHandle6,
+    SurfaceTypeFDMLbpHandle7,
+    SurfaceTypeFDMLbpHandle8,
+    SurfaceTypeFDMLbpHandle9,
+    SurfaceTypeFDMLbpHandle10,
+    SurfaceTypeFDMLbpHandle11,
+    SurfaceTypeFDMLbpHandle12,
+    SurfaceTypeFDMLbpHandle13,
+    SurfaceTypeFDMLbpHandle14,
+    SurfaceTypeFDMLbpHandle15,
+    SurfaceTypeFDMLbpHandle16,
+    SurfaceTypeFDMLbpHandle17,
+    SurfaceTypeFDMLbpHandle18,
+    SurfaceTypeFDMLbpHandle19,
+    SurfaceTypeFDMLbpHandle20,
+    SurfaceTypeFDMLbpHandle21,
+    SurfaceTypeFDMLbpHandle22,
+    SurfaceTypeFDMLbpHandle23,
+    SurfaceTypeFDMLbpHandle24,
+    SurfaceTypeFDMLbpHandle25,
+    SurfaceTypeFDMLbpHandle26,
+    SurfaceTypeFDMLbpHandle27,
+    SurfaceTypeFDMLbpHandle28,
+    SurfaceTypeFDMLbpHandle29,
+    SurfaceTypeFDMLbpHandle30,
+    SurfaceTypeFDMLbpHandle31,
+    SurfaceTypeFDMLbpHandle32,
+    SurfaceTypeFDMLbpHandle33,
+    SurfaceTypeFDMLbpHandle34,
+    SurfaceTypeFDMLbpHandle35,
+    SurfaceTypeFDMLbpHandle36,
+    SurfaceTypeFDMLbpHandle37,
+    SurfaceTypeFDMLbpHandle38,
+    SurfaceTypeFDMLbpHandle39,
+    SurfaceTypeFDMLbpHandle40,
+    SurfaceTypeFDMLbpHandle41,
+    SurfaceTypeFDMLbpHandle42,
+    SurfaceTypeFDMLbpHandle43,
+    SurfaceTypeFDMLbpHandle44,
+    SurfaceTypeFDMLbpHandle45,
+    SurfaceTypeFDMLbpHandle46,
+    SurfaceTypeFDMLbpHandle47,
+    SurfaceTypeFDMLbpHandle48,
+    SurfaceTypeFDMLbpHandle49,
+    SurfaceTypeFDMLbpHandle50,
+    SurfaceTypeFDMLbpHandle51,
+    SurfaceTypeFDMLbpHandle52,
+    SurfaceTypeFDMLbpHandle53,
+    SurfaceTypeFDMLbpHandle54,
+    SurfaceTypeFDMLbpHandle55,
+    SurfaceTypeFDMLbpHandle56,
+    SurfaceTypeFDMLbpHandle57,
+    SurfaceTypeFDMLbpHandle58,
+    SurfaceTypeFDMLbpHandle59,
+    SurfaceTypeFDMLbpHandle60,
+    SurfaceTypeFDMLbpHandle61,
+    SurfaceTypeFDMLbpHandle62,
+    SurfaceTypeFDMLbpHandle63,
+    SurfaceTypeFDMLbpHandle64,
+    // FLD
+//    SurfaceTypeFLDFrameCount,
+    SurfaceTypeFLDValidatorFlag,
+    SurfaceTypeFLDGlobalFlag,
+    SurfaceTypeFLDSurfaceSrc,
+    SurfaceTypeFLDResizeImageOutIn,
+    SurfaceTypeFLDGaussianWeightOutIn,
+    SurfaceTypeFLDFeaturesOutIn,
+    SurfaceTypeFLDLandmarkInOut,
+    SurfaceTypeFLDGlobalSumOutIn,
+    SurfaceTypeFLDCoefficientIn,
+    SurfaceTypeFLDMeanShapeInOut,
+    SurfaceTypeFLDEyeMeanShape,
+    SurfaceTypeFLDEyeLandmarks,
+    SurfaceTypeFLDInvAffineMatrix,
+    SurfaceTypeFLDEyeCoefficientIn,
+    SurfaceTypeFLDRemappedLM,
+    SurfaceTypeFLDEFFilteredLMK,
+    SurfaceTypeFLDPostProcessingOutInPre,
+    SurfaceTypeFLDPreProcessingIn,
+    SurfaceTypeFLDScoreboarGetSum,
+    SurfaceTypeFLDScoreboarExtractFeature,
+    SurfaceTypeFLDThreadMapGetSum,
+    SurfaceTypeFLDThreadMapExtractFeature,
+    SurfaceTypeFLDScaleOutIn,
+    SurfaceTypeFLDFlagOutIn,
+    SurfaceTypeFLDStartOutIn,
+    SurfaceTypeFLDNormalizeOut,
+    SurfaceTypeFLDNormalizeCoeff,
+    SurfaceTypeFLDMlbpOut,
+    SurfaceTypeFLDGetsumCoeffX,
+    SurfaceTypeFLDGetsumCoeffY,
+    SurfaceTypeFLDGetsumCoeffH,
+    SurfaceTypeFLDFaceModel,
+    // FB
+    SurfaceTypeFBSurfaceSrc,
+    SurfaceTypeFBSurface1,
+    SurfaceTypeFBSurface2,
+    SurfaceTypeFBSurface3,
+    SurfaceTypeFBSurfaceTempY,
+    SurfaceTypeFBSurfaceTempUV,
+    SurfaceTypeFBSurfaceTempTposedY,
+    SurfaceTypeFBSurfaceTempTposedUV,
+    SurfaceTypeFBMask1,
+    SurfaceTypeFBMask2,
+    SurfaceTypeFBFaceMask,
+    SurfaceTypeFBFaceMask2x,
+    SurfaceTypeFBFaceMask4x,
+    SurfaceTypeFBLipMaskInput,
+    SurfaceTypeFBLipMaskOutput,
+    SurfaceTypeFBLipPosition,
+    SurfaceTypeFBLipPosition2,
+    SurfaceTypeFBLipSum,
+    SurfaceTypeFBLipMax,
+    SurfaceTypeFBLipMin,
+    SurfaceTypeFBSamplerOut,
+    SurfaceTypeFBSamplerOut1,
+    SurfaceTypeFBSTDFrameCount,
+    SurfaceTypeFBSTDSamples,
+    SurfaceTypeFBSTDHistogram,
+    SurfaceTypeFBSTDHistory,
+    SurfaceTypeFBEyeModelMeta,
+    SurfaceTypeFBEyeModelDatas,
+    SurfaceTypeFBEyeModelDatas2,
+    SurfaceTypeFBEyeModelDatas3,
+    SurfaceTypeFBEyeModelDatas4,
+    SurfaceTypeFBEyeModelDatas5,
+    SurfaceTypeFBEyeModelDatas6,
+    SurfaceTypeFBEyeModelDatas7,
+    SurfaceTypeFBEyeModelDatas8,
+    SurfaceTypeFBEyeModelDatas9,
+    SurfaceTypeFBEyeModelDatas10,
+    SurfaceTypeFBEyeAffineMatrix,
+    SurfaceTypeFBEyeFeatureFlag,
+    SurfaceTypeFBEyeParams,
+    SurfaceTypeFBEyeRMap,
+    SurfaceTypeFBEyeCoMap,
+    SurfaceTypeFBBrightenMask,
+    SurfaceTypeFBEyeCurve,
+    SurfaceTypeFBShadowMask1,
+    SurfaceTypeFBShadowMask2,
+    SurfaceTypeFBPupilMask,
+    SurfaceTypeFBPupilParamSurf,
+    SurfaceTypeFBPupilHistSurf,
+    SurfaceTypeFBPupilVerSurf,
+    SurfaceTypeFBPupilHorSurf,
+    SurfaceTypeFBTeethColorMap,
+    SurfaceTypeFBSurfacesForVeBox,
+    SurfaceTypeFBSurfacesForVeBox1,
+    SurfaceTypeFBSurfacesForVeBox2,
+    SurfaceTypeFBVeboxParamBuf,
+    SurfaceTypeFBFacialRegions,
+    SurfaceTypeFBPostProcessingOutCur,
+    SurfaceTypeFBRemappedLM,
+    SurfaceTypeFBSamplerIndex,
+    SurfaceTypeFBInputSampler,
+    // HVS Kernel
+    SurfaceTypeHVSTable,
+    //Segmentation
+    SurfaceTypeRenderPreviousInput,
+    SurfaceTypeRenderTempOutput,  //Used for seg out only
+    SurfaceTypeSegBackground,
+    SurfaceTypeSegGaussianCoeffBuffer,
+    SurfaceTypeSegTFMask,
+    SurfaceTypeSegTFOutMask,
+    SurfaceTypeSegWindowSize,
+    SurfaceTypeSegMaskScaling,
+    SurfaceTypeSegMaskBlur,
+    SurfaceTypeSegBlurScaling,
+    SurfaceTypeSegGaussianBlur,
+    SurfaceTypeSegBlur,
+    SurfaceTypeSegBlur2,
+    SurfaceTypeSegBlur3,
+    SurfaceTypeSegGFLayer,
+    SurfaceTypeSegGFLayerEnd = SurfaceTypeSegGFLayer + 8,
+    SurfaceTypeSegGFOut,
+    SurfaceTypeSegGFOut2,
+    SurfaceTypeSegGFOut3,
+    SurfaceTypeSegGFOut4,
+    SurfaceTypeSegInputMotion,
+    SurfaceTypeSegInputMotionEnd = SurfaceTypeSegInputMotion + 2,
+    SurfaceTypeSegPreInputMotion,
+    SurfaceTypeSegPreInputMotionEnd = SurfaceTypeSegPreInputMotion +2,
+    SurfaceTypeSegDiffMotion,
+    SurfaceTypeSegDiffMotionEnd = SurfaceTypeSegDiffMotion + 2,
+    SurfaceTypeSegErode1x2Motion,
+    SurfaceTypeSegErode1x2MotionEnd = SurfaceTypeSegErode1x2Motion + 2,
+    SurfaceTypeSegErode2x1Motion,
+    SurfaceTypeSegErode2x1Motion2,
+    SurfaceTypeSegErode2x1Motion3,
+    SurfaceTypeSegSumMotion,
+    // Segmentation layers
+    SurfaceTypeSegModelLayer,
+    SurfaceTypeSegModelLayerEnd = SurfaceTypeSegModelLayer + 85,
+    SurfaceTypeSegWeights,
+    SurfaceTypeSegWeightsEnd = SurfaceTypeSegWeights + 85,
+    SurfaceTypeSegBias,
+    SurfaceTypeSegBiasEnd = SurfaceTypeSegBias + 85,
+
     NumberOfSurfaceType
 };
 
 using  VP_SURFACE_GROUP = std::map<SurfaceType, VP_SURFACE*>;
 
+struct REMOVE_BB_SETTING
+{
+    bool     isRemoveBB    = false;
+    bool     isKeepMaxBlob = false;
+    uint32_t index         = 0;
+};
+
+struct MOTIONLESS_SETTING
+{
+    bool     isEnable        = false;
+    bool     isSkipDetection = false;
+    bool     isInfer         = false;
+    bool     isFirstConv     = false;
+    bool     isMotion        = false;
+    bool     isResUpdate     = false;
+    uint32_t width           = 0;
+    uint32_t height          = 0;
+};
+
 struct VP_SURFACE_SETTING
 {
     VP_SURFACE_GROUP    surfGroup;
-    bool                isPastHistogramValid;
-    uint32_t            imageWidthOfPastHistogram;
-    uint32_t            imageHeightOfPastHistogram;
-    uint32_t            dwVeboxPerBlockStatisticsHeight;
-    uint32_t            dwVeboxPerBlockStatisticsWidth;
-    uint32_t            aggregateBlockSize;
-    bool                laceLutValid;
-    bool                updateGlobalToneMappingCurveLUTSurface;
-    bool                updateWeitCoefSurface;
-    bool                dumpLaceSurface;
+    REMOVE_BB_SETTING   removeBBSetting;
+    MOTIONLESS_SETTING  motionlessSetting;
+    bool                isPastHistogramValid       = false;
+    uint32_t            imageWidthOfPastHistogram  = 0;
+    uint32_t            imageHeightOfPastHistogram = 0;
+    uint32_t            dwVeboxPerBlockStatisticsHeight = 0;
+    uint32_t            dwVeboxPerBlockStatisticsWidth  = 0;
+    uint32_t            aggregateBlockSize              = 0;
+    bool                laceLutValid                    = false;
+    bool                updateGlobalToneMappingCurveLUTSurface = false;
+    bool                updateWeitCoefSurface                  = false;
+    bool                dumpLaceSurface                        = false;
+    bool                dumpPreSurface                         = false;
+    bool                dumpPostSurface                        = false;
 
     void Clean()
     {
         surfGroup.clear();
+        removeBBSetting             = {};
+        motionlessSetting           = {};
         isPastHistogramValid        = false;
         imageWidthOfPastHistogram   = 0;
         imageHeightOfPastHistogram  = 0;
@@ -195,6 +724,8 @@ struct VP_SURFACE_SETTING
         updateGlobalToneMappingCurveLUTSurface = true;
         updateWeitCoefSurface                  = true;
         dumpLaceSurface                        = false;
+        dumpPreSurface                         = false;
+        dumpPostSurface                        = false;
     }
 };
 
@@ -226,9 +757,16 @@ inline bool operator<(FeatureType a, FeatureType b)
 
 struct FeatureParam
 {
-    FeatureType type;
-    MOS_FORMAT  formatInput;
-    MOS_FORMAT  formatOutput;
+    FeatureType type         = FeatureTypeInvalid;
+    MOS_FORMAT  formatInput  = Format_None;
+    MOS_FORMAT  formatOutput = Format_None;
+};
+
+enum FeatureCategory
+{
+    FeatureCategoryBasic    = 0,
+    FeatureCategoryIsolated,
+    FeatureCategoryFC,
 };
 
 class SwFilterSet;
@@ -242,6 +780,7 @@ public:
     {
         MOS_ZeroMemory(&m_EngineCaps, sizeof(m_EngineCaps));
         m_noNeedUpdate = false;
+        m_isInExePipe = false;
         return MOS_STATUS_SUCCESS;
     }
     virtual FeatureType GetFeatureType()
@@ -276,6 +815,7 @@ public:
     {
         return MOS_STATUS_UNIMPLEMENTED;
     }
+
     virtual SwFilter *Clone() = 0;
     virtual bool operator == (class SwFilter&) = 0;
     virtual MOS_STATUS Update(VP_SURFACE *inputSurf, VP_SURFACE *outputSurf, SwFilterSubPipe &pipe) = 0;
@@ -319,6 +859,11 @@ public:
         return MOS_STATUS_SUCCESS;
     }
 
+    void SetExePipeFlag(bool isInExePipe)
+    {
+        m_isInExePipe = isInExePipe;
+    }
+
 protected:
     VpInterface &m_vpInterface;
     FeatureType m_type = FeatureTypeInvalid;
@@ -327,20 +872,23 @@ protected:
     VP_EngineEntry  m_EngineCaps = {};
     bool m_noNeedUpdate = false;
     RenderTargetType m_renderTargetType = RenderTargetTypeSurface;
+    bool m_isInExePipe = false;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilter)
 };
 
 struct FeatureParamCsc : public FeatureParam
 {
     struct CSC_PARAMS
     {
-        VPHAL_CSPACE    colorSpace;
-        uint32_t        chromaSiting;
+        VPHAL_CSPACE    colorSpace      = CSpace_None;
+        uint32_t        chromaSiting    = 0;
     };
-    CSC_PARAMS          input;
-    CSC_PARAMS          output;
-    PVPHAL_IEF_PARAMS   pIEFParams;
-    PVPHAL_ALPHA_PARAMS pAlphaParams;
-    FeatureParamCsc     *next;                //!< pointe to new/next generated CSC params
+    CSC_PARAMS          input           = {};
+    CSC_PARAMS          output          = {};
+    PVPHAL_IEF_PARAMS   pIEFParams      = nullptr;
+    PVPHAL_ALPHA_PARAMS pAlphaParams    = nullptr;
+    FeatureParamCsc     *next           = nullptr;                //!< pointe to new/next generated CSC params
 };
 
 class SwFilterCsc : public SwFilter
@@ -361,41 +909,44 @@ public:
 
 private:
     FeatureParamCsc m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterCsc)
 };
 
 struct FeatureParamScaling : public FeatureParam
 {
     struct SCALING_PARAMS
     {
-        uint32_t                dwWidth;
-        uint32_t                dwHeight;
-        RECT                    rcSrc;
-        RECT                    rcDst;                          //!< Input dst rect without rotate being applied.
-        RECT                    rcMaxSrc;
-        VPHAL_SAMPLE_TYPE       sampleType;
+        uint32_t                dwWidth  = 0;
+        uint32_t                dwHeight = 0;
+        RECT                    rcSrc    = {0, 0, 0, 0};
+        RECT                    rcDst    = {0, 0, 0, 0};  //!< Input dst rect without rotate being applied.
+        RECT                    rcMaxSrc = {0, 0, 0, 0};
+        VPHAL_SAMPLE_TYPE       sampleType = SAMPLE_PROGRESSIVE;
     };
 
     // Parameters maintained by scaling feature parameters
-    SCALING_PARAMS              input;
-    SCALING_PARAMS              output;
-    bool                        isPrimary;
-    VPHAL_SCALING_MODE          scalingMode;
-    VPHAL_SCALING_PREFERENCE    scalingPreference;              //!< DDI indicate Scaling preference
+    SCALING_PARAMS              input       = {};
+    SCALING_PARAMS              output      = {};
+    bool                        isPrimary   = false;
+    VPHAL_SCALING_MODE          scalingMode = VPHAL_SCALING_NEAREST;
+    VPHAL_SCALING_PREFERENCE    scalingPreference  = VPHAL_SCALING_PREFER_SFC;  //!< DDI indicate Scaling preference
     bool                        bDirectionalScalar = false;     //!< Vebox Directional Scalar
-    PVPHAL_COLORFILL_PARAMS     pColorFillParams;               //!< ColorFill - BG only
-    PVPHAL_ALPHA_PARAMS         pCompAlpha;                     //!< Alpha for composited surfaces
-    VPHAL_ISCALING_TYPE         interlacedScalingType;
+    bool                        bTargetRectangle   = false;     // Target rectangle enabled
+    PVPHAL_COLORFILL_PARAMS     pColorFillParams = nullptr;     //!< ColorFill - BG only
+    PVPHAL_ALPHA_PARAMS         pCompAlpha       = nullptr;     //!< Alpha for composited surfaces
+    VPHAL_ISCALING_TYPE         interlacedScalingType = ISCALING_NONE;
 
     // Parameters maintained by other feature parameters.
     struct {
-        VPHAL_CSPACE            colorSpaceOutput;
+        VPHAL_CSPACE colorSpaceOutput = CSpace_None;
     } csc;
 
     struct {
-        bool                    rotationNeeded;                 //!< Whether rotate SwFilter exists on SwFilterPipe.
+        bool                    rotationNeeded = false;                 //!< Whether rotate SwFilter exists on SwFilterPipe.
     } rotation;
 
-    FeatureParamScaling        *next;                           //!< pointe to new/next generated scaling params
+    FeatureParamScaling        *next = nullptr;                           //!< pointe to new/next generated scaling params
 };
 
 class SwFilterScaling : public SwFilter
@@ -406,23 +957,32 @@ public:
     virtual MOS_STATUS Clean();
     virtual MOS_STATUS Configure(VP_PIPELINE_PARAMS &params, bool isInputSurf, int surfIndex);
     virtual MOS_STATUS Configure(VEBOX_SFC_PARAMS &params);
+    virtual MOS_STATUS Configure(PVP_SURFACE surfInput, PVP_SURFACE surfOutput, VP_EXECUTE_CAPS caps);
     virtual FeatureParamScaling &GetSwFilterParams();
     virtual SwFilter *Clone();
     virtual bool operator == (SwFilter& swFilter);
     virtual MOS_STATUS Update(VP_SURFACE *inputSurf, VP_SURFACE *outputSurf, SwFilterSubPipe &pipe);
+    virtual MOS_STATUS SetResourceAssignmentHint(RESOURCE_ASSIGNMENT_HINT &hint)
+    {
+        hint.isIScalingTypeNone = ISCALING_NONE == m_Params.interlacedScalingType;
+        hint.isFieldWeaving     = ISCALING_FIELD_TO_INTERLEAVED == m_Params.interlacedScalingType;
+        return MOS_STATUS_SUCCESS;
+    }
 
 private:
     FeatureParamScaling m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterScaling)
 };
 
 struct FeatureParamRotMir : public FeatureParam
 {
     // Parameters maintained by rotation feature parameters
-    VPHAL_ROTATION rotation;
+    VPHAL_ROTATION rotation = VPHAL_ROTATION_IDENTITY;
 
     // Parameters maintained by other feature parameters.
     struct {
-        MOS_TILE_TYPE  tileOutput;
+        MOS_TILE_TYPE tileOutput = MOS_TILE_X;
     } surfInfo;
 };
 
@@ -441,15 +1001,27 @@ public:
 
 private:
     FeatureParamRotMir m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterRotMir)
+};
+
+enum DN_STAGE
+{
+    DN_STAGE_DEFAULT = 0,
+    DN_STAGE_HVS_KERNEL,
+    DN_STAGE_VEBOX_HVS_UPDATE,
+    DN_STAGE_VEBOX_HVS_NO_UPDATE,
 };
 
 struct FeatureParamDenoise : public FeatureParam
 {
-    VPHAL_SAMPLE_TYPE    sampleTypeInput;
-    VPHAL_DENOISE_PARAMS denoiseParams;
-    uint32_t             widthAlignUnitInput;
-    uint32_t             heightAlignUnitInput;
-    uint32_t             heightInput;
+    VPHAL_SAMPLE_TYPE    sampleTypeInput      = SAMPLE_PROGRESSIVE;
+    VPHAL_DENOISE_PARAMS denoiseParams        = {};
+    uint32_t             widthAlignUnitInput  = 0;
+    uint32_t             heightAlignUnitInput = 0;
+    uint32_t             heightInput          = 0;
+    bool                 secureDnNeeded       = false;
+    DN_STAGE             stage                = DN_STAGE_DEFAULT;
 };
 
 class SwFilterDenoise : public SwFilter
@@ -463,19 +1035,29 @@ public:
     virtual SwFilter* Clone();
     virtual bool operator == (SwFilter& swFilter);
     virtual MOS_STATUS Update(VP_SURFACE* inputSurf, VP_SURFACE* outputSurf, SwFilterSubPipe &pipe);
+    virtual MOS_STATUS           SetResourceAssignmentHint(RESOURCE_ASSIGNMENT_HINT &hint)
+    {
+        hint.isHVSTableNeeded = DN_STAGE_HVS_KERNEL == m_Params.stage ||
+                                DN_STAGE_VEBOX_HVS_UPDATE == m_Params.stage;
+        return MOS_STATUS_SUCCESS;
+    }
 
 private:
     FeatureParamDenoise m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterDenoise)
 };
 
 struct FeatureParamDeinterlace : public FeatureParam
 {
-    VPHAL_SAMPLE_TYPE       sampleTypeInput;
-    bool                    bHDContent;
-    PVPHAL_DI_PARAMS        diParams;
-    bool                    bFmdExtraVariance;    //!< Check if extra FMD variances need to be calculated
-    bool                    bFmdKernelEnable;     //!< FMD kernel path enabled
-    bool                    bQueryVarianceEnable; //!< Query variance enabled
+    VPHAL_SAMPLE_TYPE       sampleTypeInput      = SAMPLE_PROGRESSIVE;
+    bool                    bHDContent           = false;
+    PVPHAL_DI_PARAMS        diParams             = nullptr;
+    bool                    bFmdExtraVariance    = false;     //!< Check if extra FMD variances need to be calculated
+    bool                    bFmdKernelEnable     = false;     //!< FMD kernel path enabled
+    bool                    bQueryVarianceEnable = false;     //!< Query variance enabled
+    uint32_t                heightInput          = 0;
+    RECT                    rcSrc                = {0, 0, 0, 0};
 };
 
 class SwFilterDeinterlace : public SwFilter
@@ -498,12 +1080,14 @@ public:
 
 private:
     FeatureParamDeinterlace m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterDeinterlace)
 };
 
 struct FeatureParamSte : public FeatureParam
 {
-    bool                bEnableSTE;
-    uint32_t            dwSTEFactor;
+    bool       bEnableSTE  = false;
+    uint32_t   dwSTEFactor = 0;
 };
 
 class SwFilterSte : public SwFilter
@@ -520,17 +1104,19 @@ public:
 
 private:
     FeatureParamSte m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterSte)
 };
 
 struct FeatureParamTcc : public FeatureParam
 {
-    bool                bEnableTCC;
-    uint8_t             Red;
-    uint8_t             Green;
-    uint8_t             Blue;
-    uint8_t             Cyan;
-    uint8_t             Magenta;
-    uint8_t             Yellow;
+    bool                bEnableTCC = false;
+    uint8_t             Red        = 0;
+    uint8_t             Green      = 0;
+    uint8_t             Blue       = 0;
+    uint8_t             Cyan       = 0;
+    uint8_t             Magenta    = 0;
+    uint8_t             Yellow     = 0;
 };
 
 class SwFilterTcc : public SwFilter
@@ -547,11 +1133,13 @@ public:
 
 private:
     FeatureParamTcc m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterTcc)
 };
 
 struct FeatureParamProcamp : public FeatureParam
 {
-    PVPHAL_PROCAMP_PARAMS procampParams;
+    PVPHAL_PROCAMP_PARAMS procampParams = nullptr;
 };
 
 class SwFilterProcamp : public SwFilter
@@ -568,15 +1156,26 @@ public:
 
 private:
     FeatureParamProcamp m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterProcamp)
+};
+
+enum HDR_STAGE
+{
+    HDR_STAGE_DEFAULT = 0,
+    HDR_STAGE_3DLUT_KERNEL,
+    HDR_STAGE_VEBOX_3DLUT_UPDATE,
+    HDR_STAGE_VEBOX_3DLUT_NO_UPDATE,
 };
 
 struct FeatureParamHdr : public FeatureParam
 {
-    uint32_t        uiMaxDisplayLum;       //!< Maximum Display Luminance
-    uint32_t        uiMaxContentLevelLum;  //!< Maximum Content Level Luminance
-    VPHAL_HDR_MODE  hdrMode;
-    VPHAL_CSPACE    srcColorSpace;
-    VPHAL_CSPACE    dstColorSpace;
+    uint32_t        uiMaxDisplayLum      = 0;  //!< Maximum Display Luminance
+    uint32_t        uiMaxContentLevelLum = 0;  //!< Maximum Content Level Luminance
+    VPHAL_HDR_MODE  hdrMode              = VPHAL_HDR_MODE_NONE;
+    VPHAL_CSPACE    srcColorSpace        = CSpace_None;
+    VPHAL_CSPACE    dstColorSpace        = CSpace_None;
+    HDR_STAGE       stage                = HDR_STAGE_DEFAULT;
 };
 
 class SwFilterHdr : public SwFilter
@@ -590,14 +1189,68 @@ public:
     virtual SwFilter *       Clone();
     virtual bool             operator==(SwFilter &swFilter);
     virtual MOS_STATUS       Update(VP_SURFACE *inputSurf, VP_SURFACE *outputSurf, SwFilterSubPipe &pipe);
+    virtual MOS_STATUS SetResourceAssignmentHint(RESOURCE_ASSIGNMENT_HINT &hint)
+    {
+        hint.is3DLut2DNeeded = HDR_STAGE_3DLUT_KERNEL == m_Params.stage ||
+                               HDR_STAGE_VEBOX_3DLUT_UPDATE == m_Params.stage;
+        return MOS_STATUS_SUCCESS;
+    }
 
 private:
     FeatureParamHdr m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterHdr)
+};
+
+struct FeatureParamLumakey : public FeatureParam
+{
+    PVPHAL_LUMAKEY_PARAMS lumaKeyParams = nullptr;
+};
+
+class SwFilterLumakey : public SwFilter
+{
+public:
+    SwFilterLumakey(VpInterface &vpInterface);
+    virtual ~SwFilterLumakey();
+    virtual MOS_STATUS       Clean();
+    virtual MOS_STATUS       Configure(VP_PIPELINE_PARAMS &params, bool isInputSurf, int surfIndex);
+    virtual FeatureParamLumakey &GetSwFilterParams();
+    virtual SwFilter *       Clone();
+    virtual bool             operator==(SwFilter &swFilter);
+    virtual MOS_STATUS       Update(VP_SURFACE *inputSurf, VP_SURFACE *outputSurf, SwFilterSubPipe &pipe);
+
+private:
+    FeatureParamLumakey m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterLumakey)
+};
+
+struct FeatureParamBlending : public FeatureParam
+{
+    PVPHAL_BLENDING_PARAMS  blendingParams = nullptr;
+};
+
+class SwFilterBlending : public SwFilter
+{
+public:
+    SwFilterBlending(VpInterface &vpInterface);
+    virtual ~SwFilterBlending();
+    virtual MOS_STATUS       Clean();
+    virtual MOS_STATUS       Configure(VP_PIPELINE_PARAMS &params, bool isInputSurf, int surfIndex);
+    virtual FeatureParamBlending &GetSwFilterParams();
+    virtual SwFilter *       Clone();
+    virtual bool             operator==(SwFilter &swFilter);
+    virtual MOS_STATUS       Update(VP_SURFACE *inputSurf, VP_SURFACE *outputSurf, SwFilterSubPipe &pipe);
+
+private:
+    FeatureParamBlending m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterBlending)
 };
 
 struct FeatureParamColorFill : public FeatureParam
 {
-    PVPHAL_COLORFILL_PARAMS colorFillParams;     //!< ColorFill - BG only
+    PVPHAL_COLORFILL_PARAMS colorFillParams = nullptr;     //!< ColorFill - BG only
 };
 
 class SwFilterColorFill : public SwFilter
@@ -615,11 +1268,14 @@ public:
 
 private:
     FeatureParamColorFill m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterColorFill)
 };
 
 struct FeatureParamAlpha : public FeatureParam
 {
-    PVPHAL_ALPHA_PARAMS     compAlpha;           //!< Alpha for composited surface
+    PVPHAL_ALPHA_PARAMS     compAlpha         = nullptr;      //!< Alpha for composited surface
+    bool                    calculatingAlpha  = false;        //!< Alpha calculation parameters
 };
 
 class SwFilterAlpha : public SwFilter
@@ -636,6 +1292,8 @@ public:
 
 private:
     FeatureParamAlpha m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterAlpha)
 };
 
 class SwFilterSet
@@ -662,6 +1320,8 @@ private:
     std::map<FeatureType, SwFilter *> m_swFilters;
     // nullptr if it is unordered filters, otherwise, it's the pointer to m_OrderedFilters it belongs to.
     std::vector<class SwFilterSet *> *m_location = nullptr;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterSet)
 };
 
 }

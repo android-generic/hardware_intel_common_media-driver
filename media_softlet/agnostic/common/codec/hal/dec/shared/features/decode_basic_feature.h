@@ -137,7 +137,6 @@ public:
     bool                            m_useDummyReference = false;        //!< Indicates if use dummy reference
     MOS_SURFACE                     m_dummyReference;                   //!< Dummy reference surface
     CODECHAL_DUMMY_REFERENCE_STATUS m_dummyReferenceStatus = CODECHAL_DUMMY_REFERENCE_INVALID; //!< Indicate the status of dummy reference
-
     constexpr static uint8_t m_invalidFrameIndex = 0xff;                //!< Invalid frame index
     constexpr static uint8_t m_maxFrameIndex = CODECHAL_NUM_UNCOMPRESSED_SURFACE_HEVC; //!< Max frame index
 
@@ -157,6 +156,8 @@ protected:
 #ifdef _MMC_SUPPORTED
     bool                   m_isMmcEnabled = false;   //!< Indicate MMC enabled for current picture
 #endif
+
+MEDIA_CLASS_DEFINE_END(decode__DecodeBasicFeature)
 };
 
 }//decode

@@ -226,9 +226,6 @@ protected:
     //! \brief  Flag to mark whether the os context is valid
     bool                            m_osContextValid =  false;
 
-    //! \brief  Whether the current driver is of 64 bit
-    bool                            m_64bit = false;
-
     //! \brief  Whether or not need deallocation on exit
     bool                            m_deallocateOnExit = false;
 
@@ -258,5 +255,6 @@ protected:
 
     //!< Indicate if this device is working in aync mode or normal mode
     bool                            m_aynchronousDevice = false;
+MEDIA_CLASS_DEFINE_END(OsContextNext)
 };
 #endif // #ifndef __MOS_CONTEXTNext_NEXT_H__

@@ -80,13 +80,16 @@ typedef struct VP_SFC_ENTRY_REC
     bool                          iefSupported;
 }VP_SFC_ENTRY_REC;
 
-#define VP_FF_VEBOX_FORMAT(SurfaceFormat, bInput, bOutput, _MaxResolution, _MinResolution, _HorizUnit, _VertUnit, _HdrSupported, _CapturePipeSupported, \
-                           _DNSupported, _DISupported, _LACESupported, _FrontCscSupported, _BackEndCscSupported, _3DLutSupported, _IecpSupported, _bHsbMode)     \
+#define VP_FF_VEBOX_FORMAT(SurfaceFormat, bInput, bOutput, _MaxWidth, _MaxHeight, _MinWidth, _MinHeight, _HorizUnit, _VertUnit, _HdrSupported, _CapturePipeSupported, \
+                           _DNSupported, _DISupported, _LACESupported, _FrontCscSupported, _BackEndCscSupported, _3DLutSupported, _IecpSupported, _bHsbMode, \
+                           _TCCSupported, _ACESupported, _STESupported)     \
         {                                                                                                                   \
             veboxHwEntry[SurfaceFormat].inputSupported                          = bInput;                                   \
             veboxHwEntry[SurfaceFormat].outputSupported                         = bOutput;                                  \
-            veboxHwEntry[SurfaceFormat].maxResolution                           = _MaxResolution;                           \
-            veboxHwEntry[SurfaceFormat].minResolution                           = _MinResolution;                           \
+            veboxHwEntry[SurfaceFormat].maxWidth                                = _MaxWidth;                           \
+            veboxHwEntry[SurfaceFormat].maxHeight                               = _MaxHeight;                           \
+            veboxHwEntry[SurfaceFormat].minWidth                                = _MinWidth;                           \
+            veboxHwEntry[SurfaceFormat].minHeight                               = _MinHeight;                           \
             veboxHwEntry[SurfaceFormat].horizontalAlignUnit                     = _HorizUnit;                               \
             veboxHwEntry[SurfaceFormat].verticalAlignUnit                       = _VertUnit;                                \
             veboxHwEntry[SurfaceFormat].hdrSupported                            = _HdrSupported;                            \
@@ -99,14 +102,20 @@ typedef struct VP_SFC_ENTRY_REC
             veboxHwEntry[SurfaceFormat].b3dLutSupported                         = _3DLutSupported;                          \
             veboxHwEntry[SurfaceFormat].iecp                                    = _IecpSupported;                           \
             veboxHwEntry[SurfaceFormat].hsb                                     = _bHsbMode;                                \
+            veboxHwEntry[SurfaceFormat].tccSupported                            = _TCCSupported;                            \
+            veboxHwEntry[SurfaceFormat].aceSupported                            = _ACESupported;                            \
+            veboxHwEntry[SurfaceFormat].tccSupported                            = _TCCSupported;                            \
+            veboxHwEntry[SurfaceFormat].steSupported                            = _STESupported;                            \
         }                                                                                                                   \
 
 typedef struct VP_VEBOX_ENTRY_REC
 {
     bool                          inputSupported;
     bool                          outputSupported;
-    uint32_t                      maxResolution;
-    uint32_t                      minResolution;
+    uint32_t                      maxWidth;
+    uint32_t                      maxHeight;
+    uint32_t                      minWidth;
+    uint32_t                      minHeight;
     float                         maxScalingRatio;
     float                         minScalingRatio;
     uint32_t                      horizontalAlignUnit;
@@ -121,6 +130,9 @@ typedef struct VP_VEBOX_ENTRY_REC
     bool                          b3dLutSupported;
     bool                          iecp;// all IECP features like procamp/STD/Gamut etc
     bool                          hsb;// high speed bypass mode
+    bool                          tccSupported;
+    bool                          aceSupported;
+    bool                          steSupported;
 }VP_VEBOX_ENTRY_REC;
 
 struct VP_POLICY_RULES
@@ -129,31 +141,33 @@ struct VP_POLICY_RULES
     {
         struct
         {
-            bool enable;                            // true if enable 2 pass scaling.
+            bool enable = false;                            // true if enable 2 pass scaling.
             struct
             {
-                float ratioFor1stPass;              // scaling ratio for 1st pass when 2 pass downscaling needed. valid value in [minSfcScalingRatio, 1).
-                float minRatioEnlarged;             // min ratio enlarged according to minSfcScalingRatio. valid value is [ratioFor1stPass, 1).
-                                                    // minRatio for 2 pass upscaling is minSfcScalingRatio * minRatioEnlarged.
-                bool scalingIn1stPassIf1PassEnough; // For 1 pass enough case, if true, do scaling in 1st pass, otherwise, do scaling in 2nd pass.
-                                                    // e.g. ratioX being 1/2 and ratioY being 1/16, if true, width will do scaling in 1st pass,
-                                                    // otherwise, width will do scaling in 2nd pass
+                float ratioFor1stPass  = 0;                 // scaling ratio for 1st pass when 2 pass downscaling needed. valid value in [minSfcScalingRatio, 1).
+                float minRatioEnlarged = 0;                 // min ratio enlarged according to minSfcScalingRatio. valid value is [ratioFor1stPass, 1).
+                                                            // minRatio for 2 pass upscaling is minSfcScalingRatio * minRatioEnlarged.
+                bool scalingIn1stPassIf1PassEnough = false; // For 1 pass enough case, if true, do scaling in 1st pass, otherwise, do scaling in 2nd pass.
+                                                            // e.g. ratioX being 1/2 and ratioY being 1/16, if true, width will do scaling in 1st pass,
+                                                            // otherwise, width will do scaling in 2nd pass
             } downScaling;
             struct
             {
-                float ratioFor1stPass;              // scaling ratio for 1st pass when 2 pass upscaling needed. valid value in (1, maxSfcScalingRatio].
-                float maxRatioEnlarged;             // Max ratio enlarged according to maxSfcScalingRatio. valid value is (1, ratioFor1stPass].
-                                                    // maxRatio for 2 pass upscaling is maxSfcScalingRatio * maxRatioEnlarged.
-                bool scalingIn1stPassIf1PassEnough; // For 1 pass enough case, if true, do scaling in 1st pass, otherwise, do scaling in 2nd pass.
-                                                    // e.g. ratioX being 2 and ratioY being 16, if true, width will do scaling in 1st pass,
-                                                    // otherwise, width will do scaling in 2nd pass
+                float ratioFor1stPass  = 0;                 // scaling ratio for 1st pass when 2 pass upscaling needed. valid value in (1, maxSfcScalingRatio].
+                float maxRatioEnlarged = 0;                 // Max ratio enlarged according to maxSfcScalingRatio. valid value is (1, ratioFor1stPass].
+                                                            // maxRatio for 2 pass upscaling is maxSfcScalingRatio * maxRatioEnlarged.
+                bool scalingIn1stPassIf1PassEnough = false; // For 1 pass enough case, if true, do scaling in 1st pass, otherwise, do scaling in 2nd pass.
+                                                            // e.g. ratioX being 2 and ratioY being 16, if true, width will do scaling in 1st pass,
+                                                            // otherwise, width will do scaling in 2nd pass
             } upScaling;
         } scaling;
         struct
         {
-            bool enable;
+            bool enable = false;
         } csc;
     } sfcMultiPassSupport;
+
+    bool isAvsSamplerSupported;
 };
 
 struct VP_HW_CAPS

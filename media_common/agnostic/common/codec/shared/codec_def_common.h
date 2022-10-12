@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2021, Intel Corporation
+* Copyright (c) 2017-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -28,7 +28,7 @@
 #define __CODEC_DEF_COMMON_H__
 
 #include "mos_defs.h"
-#include "mos_os_next.h"
+#include "mos_os.h"
 #include <math.h>
 
 #define CODEC_MAX_NUM_REF_FRAME             16
@@ -87,6 +87,7 @@ typedef enum _CODEC_PICTURE_FLAG
     PICTURE_INTERLACED_FRAME        = 0x08,
     PICTURE_SHORT_TERM_REFERENCE    = 0x10,
     PICTURE_LONG_TERM_REFERENCE     = 0x20,
+    PICTURE_RESERVED0               = 0x40,
     PICTURE_INVALID                 = 0x80,
     PICTURE_RESIZE                  = 0xF0,
     PICTURE_MAX_7BITS               = 0xFF
@@ -153,7 +154,7 @@ enum CODECHAL_STANDARD
     CODECHAL_AVP_BASE   = CODECHAL_HCP_BASE + 2,
     CODECHAL_AV1        = CODECHAL_AVP_BASE,
 
-    CODECHAL_RESERVED0,
+    CODECHAL_RESERVED1,
     CODECHAL_STANDARD_MAX
 };
 
@@ -178,7 +179,8 @@ enum CODECHAL_MODE
     CODECHAL_DECODE_MODE_MVCVLD             = 11,   // Needed for CP. Not in use by Codec HAL.
     CODECHAL_DECODE_MODE_VP9VLD             = 12,
     CODECHAL_DECODE_MODE_CENC               = 13,   // Only for getting HuC-based DRM command size. Not an actual mode.
-    CODECHAL_NUM_DECODE_MODES               = 14,
+    CODECHAL_DECODE_MODE_RESERVED0          = 14,
+    CODECHAL_NUM_DECODE_MODES               = 15,
 
     CODECHAL_ENCODE_MODE_AVC                = 16,   // Must be a power of 2 to match perf report expectations
     CODECHAL_ENCODE_MODE_MPEG2              = 18,
@@ -186,7 +188,7 @@ enum CODECHAL_MODE
     CODECHAL_ENCODE_MODE_JPEG               = 20,
     CODECHAL_ENCODE_MODE_HEVC               = 22,
     CODECHAL_ENCODE_MODE_VP9                = 23,
-    CODECHAL_ENCODE_RESERVED_0              = 24,
+    CODECHAL_ENCODE_MODE_AV1                = 24,
     CODECHAL_NUM_ENCODE_MODES               = 8,
 
     CODECHAL_NUM_MODES                      = 25,   // Use the value for the last encode mode to determine this
@@ -603,8 +605,8 @@ static __inline uint32_t CodecHal_GetStandardFromMode(uint32_t mode)
     case CODECHAL_DECODE_MODE_CENC:
         standard = CODECHAL_CENC;
         break;
-    case CODECHAL_ENCODE_RESERVED_0:
-        standard = CODECHAL_RESERVED0;
+    case CODECHAL_ENCODE_MODE_AV1:
+        standard = CODECHAL_AV1;
         break;
     default:
         standard = CODECHAL_UNDEFINED;

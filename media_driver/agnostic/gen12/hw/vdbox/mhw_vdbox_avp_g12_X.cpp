@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020, Intel Corporation
+* Copyright (c) 2020-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -23,7 +23,6 @@
 //! \file     mhw_vdbox_avp_g12_X.cpp
 //! \brief    Constructs VdBox AVP commands on Gen12-based platforms
 
-#include "mhw_mmio_g12.h"
 #include "mhw_vdbox_avp_g12_X.h"
 #include "mhw_mi_hwcmd_g12_X.h"
 #include "mhw_vdbox_vdenc_hwcmd_g12_X.h"
@@ -387,7 +386,8 @@ MOS_STATUS MhwVdboxAvpInterfaceG12::GetAv1BufferSize(
         case lrTileColVBuf:
         case lrMetaTileCol:
             bufferSize = sbPerFrmHgt * CodecAv1BufferSize[index][avpBufSizeParam->m_bitDepthIdc][avpBufSizeParam->m_isSb128x128]
-                + CodecAv1BufferSizeExt[index][avpBufSizeParam->m_bitDepthIdc][avpBufSizeParam->m_isSb128x128];
+                + CodecAv1BufferSizeExt[index][avpBufSizeParam->m_bitDepthIdc][avpBufSizeParam->m_isSb128x128]
+                + MOS_PAGE_SIZE; //Add one page size here to fix page fault issue
             break;
         //frame buffer
         case segmentIdBuf:
@@ -551,6 +551,17 @@ MOS_STATUS MhwVdboxAvpInterfaceG12::AddAvpPipeModeSelectCmd(
     cmd.DW1.TileBasedEngine                             = paramsG12->bTileBasedReplayMode;
     cmd.DW3.PicStatusErrorReportId                      = false;
     cmd.DW5.PhaseIndicator                              = paramsG12->ucPhaseIndicator;
+
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    if (m_decodeInUse)
+    {
+        if (cmd.DW1.PipeWorkingMode == MHW_VDBOX_HCP_PIPE_WORK_MODE_CABAC_REAL_TILE)
+        {
+            MOS_TraceEvent(EVENT_DECODE_FEATURE_RT_SCALABILITY, EVENT_TYPE_INFO, NULL, 0, NULL, 0);
+        }
+    }
+#endif
+
     MHW_MI_CHK_STATUS(Mhw_AddCommandCmdOrBB(cmdBuffer, params->pBatchBuffer, &cmd, sizeof(cmd)));
 
     // for Gen11+, we need to add MFX wait for both KIN and VRT before and after AVP Pipemode select...
@@ -603,23 +614,17 @@ MOS_STATUS MhwVdboxAvpInterfaceG12::AddAvpDecodeSurfaceStateCmd(
 
     cmd->DW3.DefaultAlphaValue = 0;
 
-    // Add compression setting for each ref
-    cmd->DW4.MemoryCompressionEnableForAv1IntraFrame   = (MmcEnable(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.MemoryCompressionEnableForAv1LastFrame    = (MmcEnable(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.MemoryCompressionEnableForAv1Last2Frame   = (MmcEnable(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.MemoryCompressionEnableForAv1Last3Frame   = (MmcEnable(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.MemoryCompressionEnableForAv1GoldenFrame  = (MmcEnable(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.MemoryCompressionEnableForAv1BwdrefFrame  = (MmcEnable(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.MemoryCompressionEnableForAv1Altref2Frame = (MmcEnable(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.MemoryCompressionEnableForAv1AltrefFrame  = (MmcEnable(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.CompressionTypeForIntraFrame              = (MmcIsRc(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.CompressionTypeForLastFrame               = (MmcIsRc(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.CompressionTypeForLast2Frame              = (MmcIsRc(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.CompressionTypeForLast3Frame              = (MmcIsRc(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.CompressionTypeForGoldenFrame             = (MmcIsRc(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.CompressionTypeForBwdrefFrame             = (MmcIsRc(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.CompressionTypeForAltref2Frame            = (MmcIsRc(params->mmcState)) ? 0xff : 0;
-    cmd->DW4.CompressionTypeForAltrefFrame             = (MmcIsRc(params->mmcState)) ? 0xff : 0;
+    uint32_t DW4 = 0;
+    if(MmcEnable(params->mmcState))
+    {
+        DW4 |= ((~params->mmcSkipMask) & 0xff);
+    }
+    if(MmcIsRc(params->mmcState))
+    {
+        DW4 |= 0xff00;
+    }
+    
+    cmd->DW4.Value             = (DW4 | params->dwCompressionFormat << 16);
 
     return MOS_STATUS_SUCCESS;
 }
@@ -1446,6 +1451,17 @@ MOS_STATUS MhwVdboxAvpInterfaceG12::AddAvpPipeBufAddrCmd(
             &resourceParams));
     }
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    if (m_decodeInUse)
+    {
+        if (cmd.DecodedOutputFrameBufferAddressAttributes.DW0.BaseAddressMemoryCompressionEnable && !bMMCReported)
+        {
+            MOS_TraceEvent(EVENT_DECODE_FEATURE_MMC, EVENT_TYPE_INFO, NULL, 0, NULL, 0);
+            bMMCReported = true;
+        }
+    }
+#endif
+
     MHW_MI_CHK_STATUS(Mos_AddCommand(cmdBuffer, &cmd, sizeof(cmd)));
 
     return eStatus;
@@ -1659,6 +1675,8 @@ MOS_STATUS MhwVdboxAvpInterfaceG12::AddAvpDecodePicStateCmd(
         PCODEC_PICTURE  refFrameList = &(picParams->m_refFrameMap[0]);
         uint32_t        refFrameWidth[7], refFrameHeight[7];
         uint8_t         refPicIndex;
+        uint32_t        av1ScalingFactorMax = (1 << 15);  //!< AV1 Scaling factor range [1/16, 2]
+        uint32_t        av1ScalingFactorMin = (1 << 10);  //!< AV1 Scaling factor range [1/16, 2]
 
         union
         {
@@ -1696,6 +1714,10 @@ MOS_STATUS MhwVdboxAvpInterfaceG12::AddAvpDecodePicStateCmd(
 
             refFrameRes[i].m_widthInPixelMinus1     = refFrameWidth[i] - 1;
             refFrameRes[i].m_heightInPixelMinus1    = refFrameHeight[i] - 1;
+            MHW_CHK_COND(refScaleFactor[i].m_horizontalScaleFactor > av1ScalingFactorMax, "Invalid parameter");
+            MHW_CHK_COND(refScaleFactor[i].m_verticalScaleFactor   > av1ScalingFactorMax, "Invalid parameter");
+            MHW_CHK_COND(refScaleFactor[i].m_horizontalScaleFactor < av1ScalingFactorMin, "Invalid parameter");
+            MHW_CHK_COND(refScaleFactor[i].m_verticalScaleFactor   < av1ScalingFactorMin, "Invalid parameter");
         }
 
         cmd.DW31.Value = CAT2SHORTS(picParams->m_frameWidthMinus1, picParams->m_frameHeightMinus1);

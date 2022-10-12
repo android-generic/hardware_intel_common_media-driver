@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2021, Intel Corporation
+* Copyright (c) 2019-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -70,22 +70,27 @@ public:
 
 protected:
     virtual MOS_STATUS RegisterFeatures();
-    virtual MOS_STATUS GetExecutionCapsForSingleFeature(FeatureType featureType, SwFilterSubPipe& swFilterPipe);
+    virtual void UnregisterFeatures();
+    virtual MOS_STATUS GetExecutionCapsForSingleFeature(FeatureType featureType, SwFilterSubPipe& swFilterPipe, VP_EngineEntry& engineCapsCombined);
     virtual MOS_STATUS UpdateExeCaps(SwFilter* feature, VP_EXECUTE_CAPS& caps, EngineType Type);
     virtual MOS_STATUS BuildVeboxSecureFilters(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
 
-    MOS_STATUS BuildExecutionEngines(SwFilterSubPipe &swFilterPipe);
+    MOS_STATUS BuildExecutionEngines(SwFilterPipe &swFilterPipe, bool isInputPipe, uint32_t index);
     MOS_STATUS GetHwFilterParam(SwFilterPipe& subSwFilterPipe, HW_FILTER_PARAMS& params);
     MOS_STATUS ReleaseHwFilterParam(HW_FILTER_PARAMS &params);
     MOS_STATUS InitExecuteCaps(VP_EXECUTE_CAPS &caps, VP_EngineEntry &engineCapsInputPipe, VP_EngineEntry &engineCapsOutputPipe);
     MOS_STATUS GetExecuteCaps(SwFilterPipe& subSwFilterPipe, HW_FILTER_PARAMS& params);
+    MOS_STATUS Update3DLutoutputColorAndFormat(FeatureParamCsc *cscParams, FeatureParamHdr *hdrParams, MOS_FORMAT Format, VPHAL_CSPACE CSpace);
     MOS_STATUS GetCSCExecutionCapsHdr(SwFilter *hdr, SwFilter *csc);
     MOS_STATUS GetCSCExecutionCapsDi(SwFilter* feature);
     MOS_STATUS GetCSCExecutionCaps(SwFilter* feature);
+    bool IsSfcSupported(MOS_FORMAT format);
     MOS_STATUS GetScalingExecutionCaps(SwFilter* feature);
+    MOS_STATUS GetScalingExecutionCaps(SwFilter *feature, bool isHdrEnabled);
+    MOS_STATUS GetScalingExecutionCapsHdr(SwFilter *feature);
     bool IsSfcRotationSupported(FeatureParamRotMir *rotationParams);
     MOS_STATUS GetRotationExecutionCaps(SwFilter* feature);
-    MOS_STATUS GetDenoiseExecutionCaps(SwFilter* feature);
+    virtual MOS_STATUS GetDenoiseExecutionCaps(SwFilter* feature);
     MOS_STATUS GetSteExecutionCaps(SwFilter* feature);
     MOS_STATUS GetTccExecutionCaps(SwFilter* feature);
     MOS_STATUS GetProcampExecutionCaps(SwFilter* feature);
@@ -94,6 +99,8 @@ protected:
     MOS_STATUS GetDeinterlaceExecutionCaps(SwFilter* feature);
     MOS_STATUS GetColorFillExecutionCaps(SwFilter* feature);
     MOS_STATUS GetAlphaExecutionCaps(SwFilter* feature);
+    MOS_STATUS GetLumakeyExecutionCaps(SwFilter* feature);
+    MOS_STATUS GetBlendingExecutionCaps(SwFilter* feature);
 
     MOS_STATUS BuildExecuteCaps(SwFilterPipe& featurePipe, VP_EXECUTE_CAPS &caps, VP_EngineEntry &engineCapsInputPipe, VP_EngineEntry &engineCapsOutputPipe,
                                 bool &isSingleSubPipe, uint32_t &selectedPipeIndex);
@@ -119,6 +126,10 @@ protected:
     MOS_STATUS BuildExecuteHwFilter(VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
     MOS_STATUS SetupExecuteFilter(SwFilterPipe& featurePipe, std::vector<int> &layerIndexes, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
     MOS_STATUS SetupFilterResource(SwFilterPipe& featurePipe, std::vector<int> &layerIndexes, VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
+
+    bool IsAlphaSettingSupportedBySfc(MOS_FORMAT formatInput, MOS_FORMAT formatOutput, PVPHAL_ALPHA_PARAMS compAlpha);
+    bool IsAlphaSettingSupportedByVebox(MOS_FORMAT formatInput, MOS_FORMAT formatOutput, PVPHAL_ALPHA_PARAMS compAlpha);
+
     virtual MOS_STATUS AddFiltersBasedOnCaps(
         SwFilterPipe& featurePipe,
         uint32_t pipeIndex,
@@ -137,7 +148,9 @@ protected:
     MOS_STATUS AssignExecuteResource(VP_EXECUTE_CAPS& caps, HW_FILTER_PARAMS& params);
 
     virtual bool IsExcludedFeatureForHdr(FeatureType feature);
-    virtual MOS_STATUS FilterFeatureCombination(SwFilterSubPipe *pipe);
+
+    virtual MOS_STATUS FilterFeatureCombination(SwFilterPipe &pipe, bool isInputPipe, uint32_t index, VP_EngineEntry &engineCapsCombined);
+    MOS_STATUS AddCommonFilters(SwFilterSubPipe &swFilterSubPipe, VP_SURFACE *input, VP_SURFACE *outputs);
 
     virtual bool IsVeboxSecurePathEnabled(SwFilterPipe& subSwFilterPipe, VP_EXECUTE_CAPS& caps)
     {
@@ -155,6 +168,10 @@ protected:
 
         return false;
     }
+    virtual bool Is3DLutKernelSupported()
+    {
+        return true;
+    }
 
     std::map<FeatureType, PolicyFeatureHandler*> m_VeboxSfcFeatureHandlers;
     std::map<FeatureType, PolicyFeatureHandler*> m_RenderFeatureHandlers;
@@ -162,8 +179,12 @@ protected:
 
     VpInterface         &m_vpInterface;
     VP_HW_CAPS          m_hwCaps = {};
-    uint32_t            m_bypassCompMode = 0;
     bool                m_initialized = false;
+
+    // HDR 3DLut Parameters
+    uint32_t            m_savedMaxDLL   = 1000;
+    uint32_t            m_savedMaxCLL   = 4000;
+    VPHAL_HDR_MODE      m_savedHdrMode  = VPHAL_HDR_MODE_NONE;
 
     //!
     //! \brief    Check whether Alpha Supported
@@ -193,6 +214,10 @@ protected:
         }
         return false;
     }
+
+    void PrintFeatureExecutionCaps(const char *name, VP_EngineEntry &engineCaps);
+
+MEDIA_CLASS_DEFINE_END(vp__Policy)
 };
 
 }

@@ -1146,6 +1146,7 @@ VAStatus DdiEncodeBase::CreateBuffer(
             buf->iSize  = size;
             buf->format = Media_Format_Buffer;
         }
+        buf->bUseSysGfxMem = true;
         va = DdiMediaUtil_CreateBuffer(buf, mediaCtx->pDrmBufMgr);
         if (va != VA_STATUS_SUCCESS)
         {
@@ -1328,7 +1329,7 @@ VAStatus DdiEncodeBase::CreateBuffer(
     mediaCtx->uiNumBufs++;
 
     // return success if data is nullptr, no need to copy data
-    if (data == nullptr || (VAEncMacroblockMapBufferType == type && m_cpuFormat))
+    if (data == nullptr)
     {
         return va;
     }

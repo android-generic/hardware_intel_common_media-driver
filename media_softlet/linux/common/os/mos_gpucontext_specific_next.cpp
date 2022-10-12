@@ -291,63 +291,67 @@ MOS_STATUS GpuContextSpecificNext::Init(OsContextNext *osContext,
 
             if (nengine >= 2)
             {
-                if(!streamState->bGucSubmission)
+                int i;
+                //master queue
+                m_i915Context[1] = mos_gem_context_create_shared(osParameters->bufmgr,
+                                                                    osParameters->intel_context,
+                                                                    I915_CONTEXT_CREATE_FLAGS_SINGLE_TIMELINE);
+                if (m_i915Context[1] == nullptr)
                 {
-                    //master queue
-                    m_i915Context[1] = mos_gem_context_create_shared(osParameters->bufmgr,
-                                                                     osParameters->intel_context,
-                                                                     I915_CONTEXT_CREATE_FLAGS_SINGLE_TIMELINE);
-                    if (m_i915Context[1] == nullptr)
+                    MOS_OS_ASSERTMESSAGE("Failed to create master context.\n");
+                    MOS_SafeFreeMemory(engine_map);
+                    return MOS_STATUS_UNKNOWN;
+                }
+                m_i915Context[1]->pOsContext = osParameters;
+
+                if (mos_set_context_param_load_balance(m_i915Context[1], engine_map, 1))
+                {
+                    MOS_OS_ASSERTMESSAGE("Failed to set master context bond extension.\n");
+                    MOS_SafeFreeMemory(engine_map);
+                    return MOS_STATUS_UNKNOWN;
+                }
+
+                //slave queue
+                for (i=1; i<nengine; i++)
+                {
+                    m_i915Context[i+1] = mos_gem_context_create_shared(osParameters->bufmgr,
+                                                                        osParameters->intel_context,
+                                                                        I915_CONTEXT_CREATE_FLAGS_SINGLE_TIMELINE);
+                    if (m_i915Context[i+1] == nullptr)
                     {
-                        MOS_OS_ASSERTMESSAGE("Failed to create master context.\n");
+                        MOS_OS_ASSERTMESSAGE("Failed to create slave context.\n");
                         MOS_SafeFreeMemory(engine_map);
                         return MOS_STATUS_UNKNOWN;
                     }
-                    m_i915Context[1]->pOsContext = osParameters;
+                    m_i915Context[i+1]->pOsContext = osParameters;
 
-                    if (mos_set_context_param_load_balance(m_i915Context[1], engine_map, 1))
+                    if (mos_set_context_param_bond(m_i915Context[i+1], engine_map[0], &engine_map[i], 1) != S_SUCCESS)
                     {
-                        MOS_OS_ASSERTMESSAGE("Failed to set master context bond extension.\n");
-                        MOS_SafeFreeMemory(engine_map);
-                        return MOS_STATUS_UNKNOWN;
-                    }
-
-                    //slave queue
-                    for (int i=1; i<nengine; i++)
-                    {
-                        m_i915Context[i+1] = mos_gem_context_create_shared(osParameters->bufmgr,
-                                                                         osParameters->intel_context,
-                                                                         I915_CONTEXT_CREATE_FLAGS_SINGLE_TIMELINE);
-                        if (m_i915Context[i+1] == nullptr)
+                        int err = errno;
+                        if (err == ENODEV)
                         {
-                            MOS_OS_ASSERTMESSAGE("Failed to create slave context.\n");
+                            mos_gem_context_destroy(m_i915Context[1]);
+                            mos_gem_context_destroy(m_i915Context[i+1]);
+                            m_i915Context[i+1] = nullptr;
+                            break;
+                        }
+                        else
+                        {
+                            MOS_OS_ASSERTMESSAGE("Failed to set slave context bond extension. errno=%d\n",err);
                             MOS_SafeFreeMemory(engine_map);
                             return MOS_STATUS_UNKNOWN;
                         }
-                        m_i915Context[i+1]->pOsContext = osParameters;
-
-                        if (mos_set_context_param_bond(m_i915Context[i+1], engine_map[0], &engine_map[i], 1) != S_SUCCESS)
-                        {
-                            int err = errno;
-                            if (err == ENODEV)
-                            {
-                                mos_gem_context_destroy(m_i915Context[i+1]);
-                                m_i915Context[i+1] = nullptr;
-                                break;
-                            }
-                            else
-                            {
-                                MOS_OS_ASSERTMESSAGE("Failed to set slave context bond extension. errno=%d\n",err);
-                                MOS_SafeFreeMemory(engine_map);
-                                return MOS_STATUS_UNKNOWN;
-                            }
-                        }
                     }
+                }
+                if (i == nengine)
+                {
+                    streamState->bGucSubmission = false;
                 }
                 else
                 {
+                    streamState->bGucSubmission = true;
                     //create context with different width
-                    for(int i = 1; i < nengine; i++)
+                    for(i = 1; i < nengine; i++)
                     {
                         unsigned int ctxWidth = i + 1;
                         m_i915Context[i] = mos_gem_context_create_shared(osParameters->bufmgr,
@@ -1082,6 +1086,7 @@ MOS_STATUS GpuContextSpecificNext::SubmitCommandBuffer(
             }
         }
 
+        MOS_OS_CHK_NULL_RETURN(tempCmdBo->virt);
         if (perStreamParameters->bUse64BitRelocs)
         {
             *((uint64_t *)((uint8_t *)tempCmdBo->virt + currentPatch->PatchOffset)) =
@@ -1398,11 +1403,18 @@ if (streamState->dumpCommandBuffer)
 #endif  //(_DEBUG || _RELEASE_INTERNAL)
 
     //clear command buffer relocations to fix memory leak issue
-    mos_gem_bo_clear_relocs(cmd_bo, 0);
+    for (uint32_t patchIndex = 0; patchIndex < m_currentNumPatchLocations; patchIndex++)
+    {
+        auto currentPatch = &m_patchLocationList[patchIndex];
+        MOS_OS_CHK_NULL_RETURN(currentPatch);
+
+        if(currentPatch->cmdBo)
+            mos_gem_bo_clear_relocs(currentPatch->cmdBo, 0);
+    }
+
     it = m_secondaryCmdBufs.begin();
     while(it != m_secondaryCmdBufs.end())
     {
-        mos_gem_bo_clear_relocs(it->second->OsResource.bo, 0);
         MOS_FreeMemory(it->second);
         it++;
     }

@@ -44,7 +44,7 @@ MOS_STATUS Av1DecodePkt_G12_Base::Init()
 
     DECODE_CHK_STATUS(CmdPacket::Init());
 
-    m_av1BasicFeature = dynamic_cast<Av1BasicFeature*>(m_featureManager->GetFeature(FeatureIDs::basicFeature));
+    m_av1BasicFeature = dynamic_cast<Av1BasicFeatureG12*>(m_featureManager->GetFeature(FeatureIDs::basicFeature));
     DECODE_CHK_NULL(m_av1BasicFeature);
 
     m_allocator = m_av1Pipeline->GetDecodeAllocator();
@@ -109,12 +109,36 @@ MOS_STATUS Av1DecodePkt_G12_Base::AddForceWakeup(MOS_COMMAND_BUFFER& cmdBuffer)
     DECODE_FUNC_CALL();
 
     MHW_MI_FORCE_WAKEUP_PARAMS forceWakeupParams;
-    MOS_ZeroMemory(&forceWakeupParams, sizeof(MHW_MI_FORCE_WAKEUP_PARAMS));
-    forceWakeupParams.bMFXPowerWellControl = false;
-    forceWakeupParams.bMFXPowerWellControlMask = true;
-    forceWakeupParams.bHEVCPowerWellControl = true;
-    forceWakeupParams.bHEVCPowerWellControlMask = true;
+    if (MEDIA_IS_WA(m_av1Pipeline->GetWaTable(), Wa_14016153635))
+    {
+        MOS_ZeroMemory(&forceWakeupParams, sizeof(MHW_MI_FORCE_WAKEUP_PARAMS));
+        forceWakeupParams.bMFXPowerWellControl      = true;
+        forceWakeupParams.bMFXPowerWellControlMask  = true;
+        forceWakeupParams.bHEVCPowerWellControl     = false;
+        forceWakeupParams.bHEVCPowerWellControlMask = true;
+        DECODE_CHK_STATUS(m_miInterface->AddMiForceWakeupCmd(&cmdBuffer, &forceWakeupParams)); 
+        forceWakeupParams.bMFXPowerWellControl      = true;
+        forceWakeupParams.bMFXPowerWellControlMask  = true;
+        forceWakeupParams.bHEVCPowerWellControl     = true;
+        forceWakeupParams.bHEVCPowerWellControlMask = true;
+        DECODE_CHK_STATUS(m_miInterface->AddMiForceWakeupCmd(&cmdBuffer, &forceWakeupParams));
+        forceWakeupParams.bMFXPowerWellControl      = false;
+        forceWakeupParams.bMFXPowerWellControlMask  = true;
+        forceWakeupParams.bHEVCPowerWellControl     = true;
+        forceWakeupParams.bHEVCPowerWellControlMask = true;
+        DECODE_CHK_STATUS(m_miInterface->AddMiForceWakeupCmd(&cmdBuffer, &forceWakeupParams));
+    }
+    else
+    {
+        MOS_ZeroMemory(&forceWakeupParams, sizeof(MHW_MI_FORCE_WAKEUP_PARAMS));
+        forceWakeupParams.bMFXPowerWellControl      = false;
+        forceWakeupParams.bMFXPowerWellControlMask  = true;
+        forceWakeupParams.bHEVCPowerWellControl     = true;
+        forceWakeupParams.bHEVCPowerWellControlMask = true;
 
+        DECODE_CHK_STATUS(m_miInterface->AddMiForceWakeupCmd(&cmdBuffer, &forceWakeupParams));
+    }
+ 
     DECODE_CHK_STATUS(m_miInterface->AddMiForceWakeupCmd(&cmdBuffer, &forceWakeupParams));
 
     return MOS_STATUS_SUCCESS;
@@ -255,6 +279,7 @@ MOS_STATUS Av1DecodePkt_G12_Base::StartStatusReport(uint32_t srType, MOS_COMMAND
 
     MediaPacket::StartStatusReport(srType, cmdBuffer);
 
+    SetPerfTag(CODECHAL_DECODE_MODE_AV1VLD, m_av1BasicFeature->m_pictureCodingType);
     MediaPerfProfiler* perfProfiler = MediaPerfProfiler::Instance();
     DECODE_CHK_NULL(perfProfiler);
     DECODE_CHK_STATUS(perfProfiler->AddPerfCollectStartCmd(
@@ -269,8 +294,6 @@ MOS_STATUS Av1DecodePkt_G12_Base::EndStatusReport(uint32_t srType, MOS_COMMAND_B
     DECODE_CHK_NULL(cmdBuffer);
     DECODE_CHK_STATUS(ReadAvpStatus( m_statusReport, *cmdBuffer));
     DECODE_CHK_STATUS(MediaPacket::EndStatusReport(srType, cmdBuffer));
-
-    SetPerfTag(CODECHAL_DECODE_MODE_AV1VLD, m_av1BasicFeature->m_pictureCodingType);
 
     MediaPerfProfiler* perfProfiler = MediaPerfProfiler::Instance();
     DECODE_CHK_NULL(perfProfiler);

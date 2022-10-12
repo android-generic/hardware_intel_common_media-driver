@@ -27,170 +27,39 @@
 //!
 #ifndef __VP_PIPELINE_ADAPTER_BASE_H__
 #define __VP_PIPELINE_ADAPTER_BASE_H__
-#include "vphal_common.h"
-#include "vphal_common_tools.h"
-#include "mhw_vebox.h"
-#include "mhw_sfc.h"
+#include "vp_base.h"
+#include "mhw_vebox_itf.h"
 #include "vp_utils.h"
-#include "media_interfaces_mhw.h"
-
-namespace vp
-{
-class VpPlatformInterface;
-}
-
-//-----------------------------------------------------------------------------
-// VPHAL-DDI RENDERING INTERFACE
-//
-//      Params that may apply to more than one layer are part of VPHAL_SURFACE
-//      DDI layers must set this interface before calling pfnRender
-//-----------------------------------------------------------------------------
-//!
-//! Structure VphalSettings
-//! \brief VPHAL Settings - controls allocation of internal resources in VPHAL
-//!
-struct VpSettings
-{
-    //!
-    //! \brief    VphalSettings Constructor
-    //! \details  Creates instance of VphalSettings
-    //!
-    VpSettings()    : maxPhases(0),
-                      mediaStates(0),
-                      sameSampleThreshold(0),
-                      disableDnDi(0),
-                      kernelUpdate(0),
-                      disableHdr(0),
-                      veboxParallelExecution(0){};
-
-    int32_t  maxPhases;
-    int32_t  mediaStates;
-    int32_t  sameSampleThreshold;
-    uint32_t disableDnDi;             //!< For validation purpose
-    uint32_t kernelUpdate;            //!< For VEBox Copy and Update kernels
-    uint32_t disableHdr;              //!< Disable Hdr
-    uint32_t veboxParallelExecution;  //!< Control VEBox parallel execution with render engine
-};
+#include "mhw_sfc_itf.h"
+#include "mhw_render_itf.h"
 
 //!
-//! Structure VphalFeatureReport
-//! \brief    Vphal Feature Report Structure
+//! \brief Deinterlace Mode enum
 //!
-struct VpFeatureReport
+typedef enum
 {
-    //!
-    //! \brief    VphalFeatureReport Constructor
-    //! \details  Creates instance of VphalFeatureReport
-    //!
-    VpFeatureReport(void *owner = nullptr)
-    {
-        this->owner = owner;
-        // call InitReportValue() to initialize report value
-        InitReportValue();
-    };
+    VPDDI_PROGRESSIVE = 0,  //!< Progressive mode
+    VPDDI_BOB         = 1,  //!< BOB DI mode
+    VPDDI_ADI         = 2   //!< ADI mode
+} DI_MODE;
 
-    //!
-    //! \brief    initialize VphalFeatureReport value
-    //! \details  initialize VphalFeatureReport value, can use it to reset report value
-    //!
-    void                          InitReportValue()
-    {
-        IECP                = false;
-        IEF                 = false;
-        Denoise             = false;
-        ChromaDenoise       = false;
-        DeinterlaceMode     = VPHAL_DI_REPORT_PROGRESSIVE;
-        ScalingMode         = VPHAL_SCALING_NEAREST;
-        OutputPipeMode      = VPHAL_OUTPUT_PIPE_MODE_COMP;
-        VPMMCInUse          = false;
-        RTCompressible      = false;
-        RTCompressMode      = 0;
-        FFDICompressible    = false;
-        FFDICompressMode    = 0;
-        FFDNCompressible    = false;
-        FFDNCompressMode    = 0;
-        STMMCompressible    = false;
-        STMMCompressMode    = 0;
-        ScalerCompressible  = false;
-        ScalerCompressMode  = 0;
-        PrimaryCompressible = false;
-        PrimaryCompressMode = 0;
-        CompositionMode     = VPHAL_NO_COMPOSITION;
-        DiScdMode           = false;
-        VEFeatureInUse      = false;
-        HDRMode             = VPHAL_HDR_MODE_NONE;
-    }
-
-    void *                        owner = nullptr;      //!< Pointer to object creating the report
-    bool                          IECP;                 //!< IECP enable/disable
-    bool                          IEF;                  //!< Enhancement filter
-    bool                          Denoise;              //!< Denoise
-    bool                          ChromaDenoise;        //!< Chroma Denoise
-    VPHAL_DI_REPORT_MODE          DeinterlaceMode;      //!< Deinterlace mode
-    VPHAL_SCALING_MODE            ScalingMode;          //!< Scaling mode
-    VPHAL_OUTPUT_PIPE_MODE        OutputPipeMode;       //!< Output Pipe
-    bool                          VPMMCInUse;           //!< MMC enable flag
-    bool                          RTCompressible;       //!< RT MMC Compressible flag
-    uint8_t                       RTCompressMode;       //!< RT MMC Compression mode
-    bool                          FFDICompressible;     //!< FFDI MMC Compressible flag
-    uint8_t                       FFDICompressMode;     //!< FFDI MMC Compression mode
-    bool                          FFDNCompressible;     //!< FFDN MMC Compressible flag
-    uint8_t                       FFDNCompressMode;     //!< FFDN MMC Compression mode
-    bool                          STMMCompressible;     //!< STMM MMC Compressible flag
-    uint8_t                       STMMCompressMode;     //!< STMM MMC Compression mode
-    bool                          ScalerCompressible;   //!< Scaler MMC Compressible flag for Gen10
-    uint8_t                       ScalerCompressMode;   //!< Scaler MMC Compression mode for Gen10
-    bool                          PrimaryCompressible;  //!< Input Primary Surface Compressible flag
-    uint8_t                       PrimaryCompressMode;  //!< Input Primary Surface Compression mode
-    VPHAL_COMPOSITION_REPORT_MODE CompositionMode;      //!< Inplace/Legacy Compostion flag
-    bool                          VEFeatureInUse;       //!< If any VEBOX feature is in use, excluding pure bypass for SFC
-    bool                          DiScdMode;            //!< Scene change detection
-    VPHAL_HDR_MODE                HDRMode;              //!< HDR mode
-};
-
-struct _VP_MHWINTERFACE
+//!
+//! \brief Scaling Mode enum
+//!
+typedef enum
 {
-    // Internals
-    PLATFORM             m_platform;
-    MEDIA_FEATURE_TABLE *m_skuTable;
-    MEDIA_WA_TABLE *     m_waTable;
-
-    // States
-    PMOS_INTERFACE           m_osInterface;
-    PRENDERHAL_INTERFACE     m_renderHal;
-    PMHW_VEBOX_INTERFACE     m_veboxInterface;
-    MhwCpInterface *         m_cpInterface;
-    PMHW_SFC_INTERFACE       m_sfcInterface;
-    PMHW_MI_INTERFACE        m_mhwMiInterface;
-    vp::VpPlatformInterface *m_vpPlatformInterface;
-    void *                   m_settings;
-    VpFeatureReport *        m_reporting;
-
-    // Render GPU context/node
-    MOS_GPU_NODE    m_renderGpuNode;
-    MOS_GPU_CONTEXT m_renderGpuContext;
-
-    // vp Pipeline workload status report
-    PVPHAL_STATUS_TABLE m_statusTable;
-
-    void *m_debugInterface;
-};
-
-using VP_MHWINTERFACE  = _VP_MHWINTERFACE;
+    VPDDI_SCALING                = 0,  //!< Bilinear scaling
+    VPDDI_ADVANCEDSCALING        = 1,  //!< AVS scaling
+    VPDDI_SUPERRESOLUTIONSCALING = 2   //!< Super scaling
+} SCALING_MODE;
 
 //!
 //! Class VpPipelineAdapterBase
 //! \brief VP_INTERFACE class definition
 //!
-class VpPipelineAdapterBase
+class VpPipelineAdapterBase : public VpBase
 {
 public:
-    // factory function
-    static VpPipelineAdapterBase *VphalStateFactory(
-        PMOS_INTERFACE pOsInterface,
-        PMOS_CONTEXT   pOsDriverContext,
-        MOS_STATUS *   peStatus);
-
     //!
     //! \brief    VpPipelineAdapterBase Constructor
     //! \details  Creates instance of VpPipelineAdapterBase
@@ -247,6 +116,9 @@ public:
     virtual MOS_STATUS GetStatusReport(
         PQUERY_STATUS_REPORT_APP pQueryReport,
         uint16_t                 numStatus);
+    
+    virtual MOS_STATUS GetStatusReportEntryLength(
+        uint32_t                         *puiLength);
 
     virtual VpFeatureReport *GetRenderFeatureReport() = 0;
 
@@ -257,13 +129,29 @@ public:
     //!
     virtual ~VpPipelineAdapterBase();
 
-    PMOS_INTERFACE GetOsInterface()
+    virtual PMOS_INTERFACE GetOsInterface()
     {
-        return m_pOsInterface;
+        return m_osInterface;
+    }
+
+    virtual MEDIA_FEATURE_TABLE *GetSkuTable()
+    {
+        return m_skuTable;
+    }
+
+    virtual PLATFORM &GetPlatform()
+    {
+        return m_platform;
+    }
+
+    virtual PRENDERHAL_INTERFACE GetRenderHal()
+    {
+        return m_vprenderHal;
     }
 
     void SetMhwVeboxInterface(MhwVeboxInterface *veboxInterface)
     {
+        MOS_STATUS                  eStatus = MOS_STATUS_SUCCESS;
         if (veboxInterface == nullptr)
         {
             return;
@@ -271,10 +159,10 @@ public:
 
         if (m_veboxInterface != nullptr)
         {
-            MOS_STATUS eStatus = m_veboxInterface->DestroyHeap();
+            eStatus = m_veboxInterface->DestroyHeap();
             MOS_Delete(m_veboxInterface);
             m_veboxInterface = nullptr;
-            if (eStatus != MOS_STATUS_SUCCESS)
+            if (MOS_FAILED(eStatus))
             {
                 VP_PUBLIC_ASSERTMESSAGE("Failed to destroy Vebox Interface, eStatus:%d.\n", eStatus);
             }
@@ -299,7 +187,71 @@ public:
         m_sfcInterface = sfcInterface;
     }
 
-    HANDLE m_gpuAppTaskEvent = nullptr;
+    void SetMhwVeboxItf(std::shared_ptr<mhw::vebox::Itf> veboxItf)
+    {
+        MOS_STATUS                  eStatus = MOS_STATUS_SUCCESS;
+        if (veboxItf == nullptr)
+        {
+            return;
+        }
+
+        if (m_veboxItf != nullptr)
+        {
+            eStatus = m_veboxItf->DestroyHeap();
+
+            m_veboxItf       = nullptr;
+            if (MOS_FAILED(eStatus))
+            {
+                VP_PUBLIC_ASSERTMESSAGE("Failed to destroy Vebox Interface, eStatus:%d.\n", eStatus);
+            }
+        }
+
+        m_veboxItf = veboxItf;
+    }
+
+    void SetMhwSfcItf(std::shared_ptr<mhw::sfc::Itf> sfcItf)
+    {
+        if (sfcItf == nullptr)
+        {
+            return;
+        }
+
+        if (m_sfcItf != nullptr)
+        {
+            m_sfcItf       = nullptr;
+        }
+
+        m_sfcItf = sfcItf;
+    }
+
+    void SetMhwMiItf(std::shared_ptr<mhw::mi::Itf> miItf)
+    {
+        if (miItf == nullptr)
+        {
+            return;
+        }
+        if (m_miItf != nullptr)
+        {
+            m_miItf = nullptr;
+        }
+
+        m_miItf = miItf;
+    }
+
+    void SetMhwRenderItf(std::shared_ptr<mhw::render::Itf> renderItf)
+    {
+        if (renderItf == nullptr)
+        {
+            return;
+        }
+
+        if (m_renderItf != nullptr)
+        {
+            m_renderItf = nullptr;
+        }
+
+        m_renderItf = renderItf;
+    }
 
 protected:
     // Internals
@@ -308,15 +260,22 @@ protected:
     MEDIA_WA_TABLE *     m_waTable  = nullptr;
 
     // States
-    PMOS_INTERFACE       m_pOsInterface = nullptr;
+    PMOS_INTERFACE       m_osInterface   = nullptr;
     PRENDERHAL_INTERFACE m_vprenderHal   = nullptr;
     PMHW_VEBOX_INTERFACE m_veboxInterface = nullptr;
     MhwCpInterface *     m_cpInterface    = nullptr;
     PMHW_SFC_INTERFACE   m_sfcInterface   = nullptr;
+    std::shared_ptr<mhw::vebox::Itf>  m_veboxItf  = nullptr;
+    std::shared_ptr<mhw::sfc::Itf>    m_sfcItf    = nullptr;
+    std::shared_ptr<mhw::mi::Itf>     m_miItf     = nullptr;
+    std::shared_ptr<mhw::render::Itf> m_renderItf = nullptr;
 
     // StatusTable indicating if command is done by gpu or not
     VPHAL_STATUS_TABLE       m_statusTable = {};
     vp::VpPlatformInterface &m_vpPlatformInterface;  //!< vp platform interface. Should be destroyed during deconstruction.
+    MediaUserSettingSharedPtr m_userSettingPtr = nullptr;  //!< usersettingInstance
+
+MEDIA_CLASS_DEFINE_END(VpPipelineAdapterBase)
 };
 
 #endif  // __VP_PIPELINE_ADAPTER_BASE_H__

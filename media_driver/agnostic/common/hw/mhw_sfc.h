@@ -234,6 +234,11 @@ typedef struct _MHW_SFC_STATE_PARAMS
     uint32_t                        dwScaledRegionWidth;                        // Scaled region width
     uint32_t                        dwScaledRegionVerticalOffset;               // Scaled region vertical offset
     uint32_t                        dwScaledRegionHorizontalOffset;             // Scaled region horizontal offset
+    uint32_t                        dwTargetRectangleStartHorizontalOffset;     // Target rectangle start horizontal offset
+    uint32_t                        dwTargetRectangleEndHorizontalOffset;       // Target rectangle end horizontal offset
+    uint32_t                        dwTargetRectangleStartVerticalOffset;       // Target rectangle start vertical offset
+    uint32_t                        dwTargetRectangleEndVerticalOffset;         // Target rectangle end vertical offset
+    bool                            bRectangleEnabled;                          // Target rectangle enabled
     float                           fAVSXScalingRatio;                          // X Scaling Ratio
     float                           fAVSYScalingRatio;                          // Y Scaling Ratio
     bool                            bBypassXAdaptiveFilter;                     // If true, X direction will use Default Sharpness level to blend
@@ -520,6 +525,14 @@ public:
         return MOS_STATUS_SUCCESS;
     }
 
+    //!
+    //! \brief    Get new sfc interface, temporal solution before switching from
+    //!           old interface to new one
+    //!
+    //! \return   pointer to new render interface
+    //!
+    virtual std::shared_ptr<void> GetNewSfcInterface() { return nullptr; }
+
 protected:
 
     MhwSfcInterface(PMOS_INTERFACE pOsInterface);
@@ -603,6 +616,7 @@ public:
     MHW_MEMORY_OBJECT_CONTROL_PARAMS           m_histogramBufferCtrl;     // Histogram Buffer caching control bits
 
     MHW_SCALING_MODE                           m_scalingMode;
+    std::shared_ptr<void>                      m_sfcItfNew = nullptr;
 };
 
 #endif // __MHW_SFC_H__

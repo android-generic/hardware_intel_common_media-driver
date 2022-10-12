@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2021, Intel Corporation
+* Copyright (c) 2018-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -30,6 +30,8 @@
 #include "linux_skuwa_debug.h"
 #include "linux_media_skuwa.h"
 #include "mos_utilities.h"
+#include "mos_os_specific.h"
+#include "media_user_setting.h"
 
 static constexpr uint32_t singleVeboxSubSliceNumMax = 24;
 
@@ -135,8 +137,8 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
 
         /* HEVC VDENC Main8/10 422/444 Encoding. */
         MEDIA_WR_SKU(skuTable, FtrEncodeHEVCVdencMain444, codecInfo->hevcVdenc);
-        MEDIA_WR_SKU(skuTable, FtrEncodeHEVCVdencMain10, codecInfo->hevcVdenc);
-        MEDIA_WR_SKU(skuTable, FtrEncodeHEVCVdencMain10bit422, codecInfo->hevcVdenc);
+        MEDIA_WR_SKU(skuTable, FtrEncodeHEVCVdencMain422, 0);
+        MEDIA_WR_SKU(skuTable, FtrEncodeHEVCVdencMain10bit422, 0);
         MEDIA_WR_SKU(skuTable, FtrEncodeHEVCVdencMain10bit444, codecInfo->hevcVdenc);
 
         /* HEVC VDENC Main8/10bit-420/422/444 Scc Encoding. */
@@ -225,18 +227,6 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
 
     MEDIA_WR_SKU(skuTable, FtrContextBasedScheduling, 1);
     MEDIA_WR_SKU(skuTable, FtrSfcScalability, 1);
-    // Enable context based scheduling when vebox scalabilitiy enable due to KMD didn't support GUC submission yet
-    MOS_USER_FEATURE_VALUE_DATA userFeatureData;
-    MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
-    MOS_UserFeature_ReadValue_ID(
-        nullptr,
-        __MEDIA_USER_FEATURE_VALUE_ENABLE_VEBOX_SCALABILITY_MODE_ID,
-        &userFeatureData,
-        nullptr);
-    if (userFeatureData.i32Data)
-    {
-        MEDIA_WR_SKU(skuTable, FtrContextBasedScheduling, 1);
-    }
 
     MEDIA_WR_SKU(skuTable, FtrTileY, 1);
 
@@ -250,12 +240,13 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
     }
 
     // Disable MMC for all components if set reg key
+    MOS_USER_FEATURE_VALUE_DATA userFeatureData;
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
     MOS_UserFeature_ReadValue_ID(
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_DISABLE_MMC_ID,
         &userFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)nullptr);
     if (userFeatureData.bData)
     {
         disableMMC = true;
@@ -272,7 +263,7 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_FORCE_MMC_ON_ID,
         &userFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)nullptr);
 
     if (userFeatureData.bData)
     {
@@ -283,6 +274,23 @@ static bool InitTglMediaSku(struct GfxDeviceInfo *devInfo,
 
     MEDIA_WR_SKU(skuTable, FtrUseSwSwizzling, 1);
     MEDIA_WR_SKU(skuTable, FtrScalingFirst, 1);
+
+    // Create uncompressible surface by default
+    MEDIA_WR_SKU(skuTable, FtrCompressibleSurfaceDefault, 0);
+
+    bool compressibleSurfaceEnable = false;
+
+    ReadUserSetting(nullptr,
+        compressibleSurfaceEnable,
+        "Enable Compressible Surface Creation",
+        MediaUserSetting::Group::Device);
+
+    if (compressibleSurfaceEnable)
+    {
+        MEDIA_WR_SKU(skuTable, FtrCompressibleSurfaceDefault, 1);
+    }
+
+    MEDIA_WR_SKU(skuTable, FtrHDR, 1);
 
     return true;
 }
@@ -313,7 +321,7 @@ static bool InitTglMediaWa(struct GfxDeviceInfo *devInfo,
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_AUX_TABLE_16K_GRANULAR_ID,
         &userFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)nullptr);
 
     MEDIA_WR_WA(waTable, WaDummyReference, 1);
 
@@ -384,7 +392,7 @@ static bool InitDG1MediaSku(struct GfxDeviceInfo *devInfo,
         nullptr,
         __VPHAL_ENABLE_MMC_ID,
         &userFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)nullptr);
     if (userFeatureData.bData)
     {
         enableVPMMC = true;
@@ -395,7 +403,7 @@ static bool InitDG1MediaSku(struct GfxDeviceInfo *devInfo,
         nullptr,
         __MEDIA_USER_FEATURE_VALUE_CODEC_MMC_ENABLE_ID,
         &userFeatureData,
-        nullptr);
+        (MOS_CONTEXT_HANDLE)nullptr);
     if (userFeatureData.bData)
     {
         enableCodecMMC = true;
@@ -509,6 +517,9 @@ static bool InitAdlsMediaSku(struct GfxDeviceInfo *devInfo,
     //Disable VP8 for ADLS
     MEDIA_WR_SKU(skuTable, FtrIntelVP8VLDDecoding, 0);
 
+    // Disable HEVC 422 Virtual Tile Scalability
+    MEDIA_WR_SKU(skuTable, FtrDecodeHEVC422VTScalaDisable, 1);
+
     return true;
 }
 
@@ -555,6 +566,8 @@ static bool InitAdlpMediaSku(struct GfxDeviceInfo *devInfo,
     }
 
     MEDIA_WR_SKU(skuTable, FtrAV1VLDLSTDecoding, 1);
+    MEDIA_WR_SKU(skuTable, FtrGucSubmission, 1);
+    MEDIA_WR_SKU(skuTable, FtrDecodeHEVC422VTScalaDisable, 1);
 
     return true;
 }
@@ -570,7 +583,6 @@ static bool InitAdlpMediaWa(struct GfxDeviceInfo *devInfo,
 
     //ADL-P not need this
     MEDIA_WR_WA(waTable, Wa_1409820462, 0);
-
     return true;
 }
 
@@ -586,6 +598,54 @@ static bool adlpDeviceRegister = DeviceInfoFactory<LinuxDeviceInit>::
 
 #endif
 
+#ifdef IGFX_GEN12_ADLN_SUPPORTED
+static bool InitAdlnMediaSku(struct GfxDeviceInfo *devInfo,
+    MediaFeatureTable *                            skuTable,
+    struct LinuxDriverInfo *                       drvInfo)
+{
+    if (!InitTglMediaSku(devInfo, skuTable, drvInfo))
+    {
+        return false;
+    }
+
+    if (devInfo->eGTType == GTTYPE_GT0_5)
+    {
+        MEDIA_WR_SKU(skuTable, FtrGT0_5, 1);
+    }
+
+    MEDIA_WR_SKU(skuTable, FtrAV1VLDLSTDecoding, 1);
+    MEDIA_WR_SKU(skuTable, FtrGucSubmission, 1);
+    MEDIA_WR_SKU(skuTable, FtrDecodeHEVC422VTScalaDisable, 1);
+
+    return true;
+}
+
+static bool InitAdlnMediaWa(struct GfxDeviceInfo *devInfo,
+    MediaWaTable *                                waTable,
+    struct LinuxDriverInfo *                      drvInfo)
+{
+    if (!InitTglMediaWa(devInfo, waTable, drvInfo))
+    {
+        return false;
+    }
+
+    //ADL-N keeps below setting same as ADL-S/ADL-P
+    MEDIA_WR_WA(waTable, Wa_1409820462, 0);
+
+    return true;
+}
+
+static struct LinuxDeviceInit adlnDeviceInit =
+    {
+        .productFamily    = IGFX_ALDERLAKE_N,
+        .InitMediaFeature = InitAdlnMediaSku,
+        .InitMediaWa      = InitAdlnMediaWa,
+};
+
+static bool adlnDeviceRegister = DeviceInfoFactory<LinuxDeviceInit>::
+    RegisterDevice(IGFX_ALDERLAKE_N, &adlnDeviceInit);
+
+#endif
 
 static struct LinuxDeviceInit tgllpDeviceInit =
 {

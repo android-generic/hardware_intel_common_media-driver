@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2021, Intel Corporation
+* Copyright (c) 2018-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -30,6 +30,10 @@
 #include "vp_utils.h"
 #include "hw_filter.h"
 #include "sw_filter_pipe.h"
+#ifndef ENABLE_VP_SOFTLET_BUILD
+#include "vp_vebox_cmd_packet_legacy.h"
+#endif
+#include "vp_platform_interface.h"
 
 using namespace vp;
 
@@ -71,13 +75,15 @@ MOS_STATUS VpScalingFilter::SfcAdjustBoundary(
     VP_FUNC_CALL();
 
     VP_PUBLIC_CHK_NULL_RETURN(m_pvpMhwInterface);
-    VP_PUBLIC_CHK_NULL_RETURN(m_pvpMhwInterface->m_sfcInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(m_pvpMhwInterface->m_vpPlatformInterface);
+    //VP_PUBLIC_CHK_NULL_RETURN(m_pvpMhwInterface->m_sfcInterface);
     VP_PUBLIC_CHK_NULL_RETURN(pdwSurfaceWidth);
     VP_PUBLIC_CHK_NULL_RETURN(pdwSurfaceHeight);
 
-    uint32_t widthAlignUnit     = m_pvpMhwInterface->m_sfcInterface->m_veWidthAlignment;
-    uint32_t heightAlignUnit    = m_pvpMhwInterface->m_sfcInterface->m_veHeightAlignment;
-    VP_PUBLIC_CHK_STATUS_RETURN(m_pvpMhwInterface->m_sfcInterface->GetInputFrameWidthHeightAlignUnit(widthAlignUnit, heightAlignUnit,
+    uint32_t widthAlignUnit  = 0;
+    uint32_t heightAlignUnit = 0;
+
+    VP_PUBLIC_CHK_STATUS_RETURN(m_pvpMhwInterface->m_vpPlatformInterface->GetInputFrameWidthHeightAlignUnit(m_pvpMhwInterface, widthAlignUnit, heightAlignUnit,
         m_bVdbox, m_codecStandard, m_jpegChromaType));
 
     uint32_t dwVeboxHeight = m_scalingParams.input.dwHeight;
@@ -128,7 +134,7 @@ void VpScalingFilter::GetFormatWidthHeightAlignUnit(
     widthAlignUnit = 1;
     heightAlignUnit = 1;
 
-    switch (VpHal_GetSurfaceColorPack(format))
+    switch (VpUtils::GetSurfaceColorPack(format))
     {
     case VPHAL_COLORPACK_420:
         widthAlignUnit = 2;
@@ -172,6 +178,8 @@ MOS_STATUS VpScalingFilter::SetColorFillParams()
 
     m_sfcScalingParams->sfcColorfillParams.bColorfillEnable = m_bColorfillEnable;
 
+    VP_PUBLIC_NORMALMESSAGE("isColorfillEnable %d", m_bColorfillEnable);
+
     if (m_bColorfillEnable)
     {
         VP_PUBLIC_CHK_NULL_RETURN(m_scalingParams.pColorFillParams);
@@ -184,9 +192,11 @@ MOS_STATUS VpScalingFilter::SetColorFillParams()
             (m_colorFillSrcCspace != src_cspace)         ||
             (m_colorFillRTCspace  != dst_cspace))
         {
+            VP_PUBLIC_NORMALMESSAGE("colorFillColorDst need be recalculated.");
             // Clean history Dst BG Color if hit unsupported format
-            if (!VpHal_CSC_8(&m_colorFillColorDst, &Src, src_cspace, dst_cspace))
+            if (!VpUtils::GetCscMatrixForRender8Bit(&m_colorFillColorDst, &Src, src_cspace, dst_cspace))
             {
+                VP_PUBLIC_NORMALMESSAGE("VpHal_CSC_8 failed!");
                 MOS_ZeroMemory(&m_colorFillColorDst, sizeof(m_colorFillColorDst));
             }
             // store the values for next iteration
@@ -194,6 +204,8 @@ MOS_STATUS VpScalingFilter::SetColorFillParams()
             m_colorFillSrcCspace = src_cspace;
             m_colorFillRTCspace  = dst_cspace;
         }
+
+        VP_PUBLIC_NORMALMESSAGE("colorFillSrc %x, src_cspace %d, colorFillDst %x, dst_cspace %d", Src.dwValue, src_cspace, m_colorFillColorDst.dwValue, dst_cspace);
 
         VP_RENDER_CHK_STATUS_RETURN(SetYUVRGBPixel());
         m_sfcScalingParams->sfcColorfillParams.fColorFillAPixel = (float)Src.A / 255.0F;
@@ -281,6 +293,13 @@ MOS_STATUS VpScalingFilter::SetAlphaPixelParams()
     case VPHAL_ALPHA_FILL_MODE_SOURCE_STREAM:
     case VPHAL_ALPHA_FILL_MODE_OPAQUE:
     default:
+        if (Format_Y416 == m_scalingParams.formatOutput &&
+            VPHAL_ALPHA_FILL_MODE_OPAQUE == m_scalingParams.pCompAlpha->AlphaMode)
+        {
+            // AlphaDefaultValue in SfcState is 10 bits, while alpha channel of Y416 is 16.
+            // The high 4 bits alpha of Y416 will be missed.
+            VP_PUBLIC_NORMALMESSAGE("The high 4 bits alpha of Y416 will be missed.");
+        }
         m_sfcScalingParams->sfcColorfillParams.fAlphaPixel      = 1.0F;
         m_sfcScalingParams->sfcColorfillParams.fColorFillAPixel = 1.0F;
     }
@@ -346,7 +365,82 @@ MOS_STATUS VpScalingFilter::SetRectSurfaceAlignment(bool isOutputSurf, uint32_t 
     return eStatus;
 }
 
-// Prepare
+MOS_STATUS VpScalingFilter::SetTargetRectangle(uint16_t iWidthAlignUnit, uint16_t iHeightAlignUnit, uint16_t oWidthAlignUnit, uint16_t oHeightAlignUnit, float scaleX, float scaleY)
+{
+    VP_FUNC_CALL();
+    VP_PUBLIC_CHK_NULL_RETURN(m_pvpMhwInterface);
+    if (MEDIA_IS_SKU(m_pvpMhwInterface->m_skuTable, FtrSFCTargetRectangle))
+    {
+        m_sfcScalingParams->bRectangleEnabled = m_scalingParams.bTargetRectangle;
+        uint32_t dstTargetLeftAligned  = MOS_ALIGN_FLOOR((uint32_t)m_scalingParams.output.rcDst.left, oWidthAlignUnit);
+        uint32_t dstTargetTopAligned   = MOS_ALIGN_FLOOR((uint32_t)m_scalingParams.output.rcDst.top, oHeightAlignUnit);
+        uint32_t dstTargetRightAligned = MOS_ALIGN_FLOOR((uint32_t)m_scalingParams.output.rcDst.right, oWidthAlignUnit);
+        uint32_t dstTargetDownAligned  = MOS_ALIGN_FLOOR((uint32_t)m_scalingParams.output.rcDst.bottom, oHeightAlignUnit);
+
+        // Source rectangle is not contained with target rectangle
+        uint32_t top_shift    = MOS_MAX(m_scalingParams.output.rcDst.top, m_scalingParams.input.rcDst.top) - m_scalingParams.input.rcDst.top;
+        uint32_t left_shift   = MOS_MAX(m_scalingParams.output.rcDst.left, m_scalingParams.input.rcDst.left) - m_scalingParams.input.rcDst.left;
+        uint32_t bottom_shift = m_scalingParams.input.rcDst.bottom - MOS_MIN(m_scalingParams.output.rcDst.bottom, m_scalingParams.input.rcDst.bottom);
+        uint32_t right_shift  = m_scalingParams.input.rcDst.right - MOS_MIN(m_scalingParams.output.rcDst.right, m_scalingParams.input.rcDst.right);
+
+        uint32_t srcTop = 0, srcLeft = 0, srcBottom = 0, srcRight = 0;
+        uint32_t dstTop = 0, dstLeft = 0, dstBottom = 0, dstRight = 0;
+        uint32_t dstInputLeftAligned = 0, dstInputTopAligned = 0;
+
+        if (top_shift > 0 || left_shift > 0 || bottom_shift > 0 || right_shift > 0)
+        {
+            srcTop                                  = m_scalingParams.input.rcSrc.top + MOS_UF_ROUND(top_shift / scaleY);
+            srcLeft                                 = m_scalingParams.input.rcSrc.left + MOS_UF_ROUND(left_shift / scaleX);
+            srcBottom                               = m_scalingParams.input.rcSrc.bottom - MOS_UF_ROUND(bottom_shift / scaleY);
+            srcRight                                = m_scalingParams.input.rcSrc.right - MOS_UF_ROUND(right_shift / scaleX);
+            m_sfcScalingParams->dwSourceRegionWidth  = MOS_ALIGN_FLOOR(srcRight - srcLeft, iWidthAlignUnit);
+            m_sfcScalingParams->dwSourceRegionHeight = MOS_ALIGN_FLOOR(srcBottom - srcTop, iHeightAlignUnit);
+            m_sfcScalingParams->dwSourceRegionHorizontalOffset = MOS_ALIGN_FLOOR(srcLeft, iWidthAlignUnit);
+            m_sfcScalingParams->dwSourceRegionVerticalOffset   = MOS_ALIGN_FLOOR(srcTop, iHeightAlignUnit);
+
+            dstTop = MOS_MAX(m_scalingParams.output.rcDst.top, m_scalingParams.input.rcDst.top);
+            dstLeft = MOS_MAX(m_scalingParams.output.rcDst.left, m_scalingParams.input.rcDst.left);
+            dstBottom = MOS_MIN(m_scalingParams.output.rcDst.bottom, m_scalingParams.input.rcDst.bottom);
+            dstRight  = MOS_MIN(m_scalingParams.output.rcDst.right, m_scalingParams.input.rcDst.right);
+
+            m_sfcScalingParams->dwScaledRegionWidth  = MOS_ALIGN_FLOOR(dstRight - dstLeft, oWidthAlignUnit);
+            m_sfcScalingParams->dwScaledRegionHeight = MOS_ALIGN_FLOOR(dstBottom - dstTop, oHeightAlignUnit);
+
+            dstInputLeftAligned = MOS_ALIGN_FLOOR(dstLeft, oWidthAlignUnit);
+            dstInputTopAligned  = MOS_ALIGN_FLOOR(dstTop, oHeightAlignUnit);
+        }
+        else
+        {
+            dstInputLeftAligned = MOS_ALIGN_FLOOR((uint32_t)m_scalingParams.input.rcDst.left, oWidthAlignUnit);
+            dstInputTopAligned  = MOS_ALIGN_FLOOR((uint32_t)m_scalingParams.input.rcDst.top, oHeightAlignUnit);
+        }
+
+
+        if (m_scalingParams.rotation.rotationNeeded)
+        {
+            m_sfcScalingParams->dwScaledRegionHorizontalOffset         = dstInputTopAligned;
+            m_sfcScalingParams->dwScaledRegionVerticalOffset           = dstInputLeftAligned;
+
+            m_sfcScalingParams->dwTargetRectangleStartHorizontalOffset = dstTargetTopAligned;
+            m_sfcScalingParams->dwTargetRectangleStartVerticalOffset   = dstTargetLeftAligned;
+            m_sfcScalingParams->dwTargetRectangleEndHorizontalOffset   = dstTargetDownAligned;
+            m_sfcScalingParams->dwTargetRectangleEndVerticalOffset     = dstTargetRightAligned;
+        }
+        else
+        {
+            m_sfcScalingParams->dwScaledRegionHorizontalOffset         = dstInputLeftAligned;
+            m_sfcScalingParams->dwScaledRegionVerticalOffset           = dstInputTopAligned;
+
+            m_sfcScalingParams->dwTargetRectangleStartHorizontalOffset = dstTargetLeftAligned;
+            m_sfcScalingParams->dwTargetRectangleStartVerticalOffset   = dstTargetTopAligned;
+            m_sfcScalingParams->dwTargetRectangleEndHorizontalOffset   = dstTargetRightAligned;
+            m_sfcScalingParams->dwTargetRectangleEndVerticalOffset     = dstTargetDownAligned;
+        }
+
+    }
+    return MOS_STATUS_SUCCESS;
+}
+    // Prepare
 MOS_STATUS VpScalingFilter::SetExecuteEngineCaps(
     FeatureParamScaling     &scalingParams,
     VP_EXECUTE_CAPS         vpExecuteCaps)
@@ -356,7 +450,10 @@ MOS_STATUS VpScalingFilter::SetExecuteEngineCaps(
     m_executeCaps   = vpExecuteCaps;
 
     m_scalingParams = scalingParams;
-    m_scalingParams.input.rcMaxSrc = m_scalingParams.input.rcSrc;
+    if (!m_bVdbox)
+    {
+        m_scalingParams.input.rcMaxSrc = m_scalingParams.input.rcSrc;
+    }
 
     // Set Src/Dst Surface Rect
     VP_PUBLIC_CHK_STATUS_RETURN(SetRectSurfaceAlignment(false, m_scalingParams.input.dwWidth,
@@ -438,6 +535,8 @@ MOS_STATUS VpScalingFilter::CalculateEngineParams()
         //Set source input offset in Horizontal/vertical
         m_sfcScalingParams->dwSourceRegionHorizontalOffset = MOS_ALIGN_CEIL((uint32_t)m_scalingParams.input.rcSrc.left, wInputWidthAlignUnit);
         m_sfcScalingParams->dwSourceRegionVerticalOffset   = MOS_ALIGN_CEIL((uint32_t)m_scalingParams.input.rcSrc.top, wInputHeightAlignUnit);
+
+        // Exclude padding area of the SFC input
         m_sfcScalingParams->dwSourceRegionHeight           = MOS_ALIGN_FLOOR(
             MOS_MIN((uint32_t)(m_scalingParams.input.rcSrc.bottom - m_scalingParams.input.rcSrc.top), m_sfcScalingParams->dwInputFrameHeight),
             wInputHeightAlignUnit);
@@ -471,6 +570,14 @@ MOS_STATUS VpScalingFilter::CalculateEngineParams()
         m_sfcScalingParams->dwScaledRegionHeight = MOS_MIN(m_sfcScalingParams->dwScaledRegionHeight, m_sfcScalingParams->dwOutputFrameHeight);
         m_sfcScalingParams->dwScaledRegionWidth  = MOS_MIN(m_sfcScalingParams->dwScaledRegionWidth, m_sfcScalingParams->dwOutputFrameWidth);
 
+        if (m_bVdbox)
+        {
+            // In VD-to-SFC modes, scaled region should be programmed to same value as Output Frame Resolution.
+            // Output Frame Resolution should be updated after scaled region being calculated, or scaling ratio may be incorrect.
+            m_sfcScalingParams->dwOutputFrameHeight = m_sfcScalingParams->dwScaledRegionHeight;
+            m_sfcScalingParams->dwOutputFrameWidth  = m_sfcScalingParams->dwScaledRegionWidth;
+        }
+
         uint32_t dstInputLeftAligned = MOS_ALIGN_FLOOR((uint32_t)m_scalingParams.input.rcDst.left, wOutputWidthAlignUnit);
         uint32_t dstInputTopAligned = MOS_ALIGN_FLOOR((uint32_t)m_scalingParams.input.rcDst.top, wOutputHeightAlignUnit);
 
@@ -483,6 +590,11 @@ MOS_STATUS VpScalingFilter::CalculateEngineParams()
         {
             m_sfcScalingParams->dwScaledRegionHorizontalOffset = dstInputLeftAligned;
             m_sfcScalingParams->dwScaledRegionVerticalOffset   = dstInputTopAligned;
+        }
+
+        if (m_scalingParams.bTargetRectangle)
+        {
+            VP_RENDER_CHK_STATUS_RETURN(SetTargetRectangle(wInputWidthAlignUnit, wOutputHeightAlignUnit, wOutputWidthAlignUnit, wOutputHeightAlignUnit, fScaleX, fScaleY));
         }
 
         // Refine the Scaling ratios in the X and Y direction. SFC output Scaled size may be changed based on the restriction of SFC alignment.
@@ -607,18 +719,28 @@ bool VpSfcScalingParameter::SetPacketParam(VpCmdPacket *pPacket)
 {
     VP_FUNC_CALL();
 
-    VpVeboxCmdPacket *pVeboxPacket = dynamic_cast<VpVeboxCmdPacket *>(pPacket);
-    if (nullptr == pVeboxPacket)
+    SFC_SCALING_PARAMS *params = m_ScalingFilter.GetSfcParams();
+    if (nullptr == params)
     {
+        VP_PUBLIC_ASSERTMESSAGE("Failed to get sfc scaling params");
         return false;
     }
 
-    SFC_SCALING_PARAMS *pParams = m_ScalingFilter.GetSfcParams();
-    if (nullptr == pParams)
+    VpVeboxCmdPacket *packet = dynamic_cast<VpVeboxCmdPacket *>(pPacket);
+    if (packet)
     {
-        return false;
+        return MOS_SUCCEEDED(packet->SetScalingParams(params));
     }
-    return MOS_SUCCEEDED(pVeboxPacket->SetScalingParams(pParams));
+#ifndef ENABLE_VP_SOFTLET_BUILD
+    VpVeboxCmdPacketLegacy *packetLegacy = dynamic_cast<VpVeboxCmdPacketLegacy *>(pPacket);
+    if (packetLegacy)
+    {
+        return MOS_SUCCEEDED(packetLegacy->SetScalingParams(params));
+    }
+#endif
+
+    VP_PUBLIC_ASSERTMESSAGE("Invalid packet for sfc scaling");
+    return false;
 }
 
 MOS_STATUS VpSfcScalingParameter::Initialize(HW_FILTER_SCALING_PARAM &params)
@@ -787,9 +909,78 @@ MOS_STATUS PolicySfcScalingHandler::UpdateFeaturePipe(VP_EXECUTE_CAPS caps, SwFi
     }
     else
     {
-        return PolicyFeatureHandler::UpdateFeaturePipe(caps, feature, featurePipe, executePipe, isInputPipe, index);
+        if (caps.bOutputPipeFeatureInuse)
+        {
+            return PolicyFeatureHandler::UpdateFeaturePipe(caps, feature, featurePipe, executePipe, isInputPipe, index);
+        }
+        else
+        {
+            SwFilterScaling *filter2ndPass = featureScaling;
+            SwFilterScaling *filter1ndPass = (SwFilterScaling *)feature.Clone();
+
+            filter1ndPass->GetFilterEngineCaps().value = 0;
+            filter1ndPass->SetFeatureType(FeatureType::FeatureTypeScaling);
+
+            FeatureParamScaling &params2ndPass = filter2ndPass->GetSwFilterParams();
+            FeatureParamScaling &params1stPass = filter1ndPass->GetSwFilterParams();
+
+            uint32_t inputWidth = params1stPass.input.rcSrc.right - params1stPass.input.rcSrc.left;
+            uint32_t inputHeight = params1stPass.input.rcSrc.bottom - params1stPass.input.rcSrc.top;
+            uint32_t outputWidth = params1stPass.input.rcDst.right - params1stPass.input.rcDst.left;
+            uint32_t outputHeight = params1stPass.input.rcDst.bottom - params1stPass.input.rcDst.top;
+
+            VP_PUBLIC_NORMALMESSAGE("sfc scaling w/o rectangle info on target surface: (%dx%d)->(%dx%d)",
+                inputWidth, inputHeight, outputWidth, outputHeight);
+
+            params1stPass.input.rcDst.left = 0;
+            params1stPass.input.rcDst.right = outputWidth;
+            params1stPass.input.rcDst.top = 0;
+            params1stPass.input.rcDst.bottom = outputHeight;
+
+            params1stPass.output.dwWidth = outputWidth;
+            params1stPass.output.dwHeight = outputHeight;
+            params1stPass.output.rcSrc = params1stPass.input.rcDst;
+            params1stPass.output.rcDst = params1stPass.input.rcDst;
+            params1stPass.output.rcMaxSrc = params1stPass.output.rcSrc;
+
+            params2ndPass.input.dwWidth = params1stPass.output.dwWidth;
+            params2ndPass.input.dwHeight = params1stPass.output.dwHeight;
+            params2ndPass.input.rcSrc = params1stPass.input.rcDst;
+            params2ndPass.input.rcMaxSrc = params2ndPass.input.rcSrc;
+
+            // Set engine caps for filter in 2nd pass.
+            filter2ndPass->SetFeatureType(FeatureTypeScaling);
+            filter2ndPass->GetFilterEngineCaps().value = 0;
+            filter2ndPass->GetFilterEngineCaps().bEnabled = 1;
+            filter2ndPass->GetFilterEngineCaps().SfcNeeded = 1;
+            filter2ndPass->GetFilterEngineCaps().RenderNeeded = 1;
+            filter2ndPass->GetFilterEngineCaps().fcSupported = 1;
+            filter2ndPass->GetFilterEngineCaps().usedForNextPass = 1;
+
+            executePipe.AddSwFilterUnordered(filter1ndPass, isInputPipe, index);
+
+        }
     }
 
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS PolicySfcScalingHandler::UpdateUnusedFeature(VP_EXECUTE_CAPS caps, SwFilter &feature, SwFilterPipe &featurePipe, SwFilterPipe &executePipe, bool isInputPipe, int index)
+{
+    // feature.GetFilterEngineCaps().bEnabled should be used here instead of feature.IsFeatureEnabled(caps)
+    // to ensure the feature does not be enabled.
+    // feature.IsFeatureEnabled(caps) being false means the feature is not being used in current workload,
+    // in which case, the feature itself may be enable and need be processed in following workloads.
+    if (caps.bVebox && !caps.bSFC &&
+        0 == caps.bOutputPipeFeatureInuse &&
+        !feature.GetFilterEngineCaps().bEnabled)
+    {
+        // To avoid scaling filter being destroyed in Policy::UpdateFeaturePipe.
+        feature.GetFilterEngineCaps().value = 0;
+        feature.GetFilterEngineCaps().forceEnableForSfc = 1;
+        feature.GetFilterEngineCaps().forceEnableForRender = 1;
+        feature.GetFilterEngineCaps().usedForNextPass = 1;
+    }
     return MOS_STATUS_SUCCESS;
 }
 
@@ -861,7 +1052,7 @@ MOS_STATUS PolicySfcAlphaHandler::UpdateFeaturePipe(VP_EXECUTE_CAPS caps, SwFilt
 {
     VP_FUNC_CALL();
 
-    if (caps.bSFC && caps.bSfcScaling)
+    if (caps.bSFC && caps.bSfcScaling || !caps.bSFC && caps.bVebox)
     {
         if (true == isInputPipe)
         {

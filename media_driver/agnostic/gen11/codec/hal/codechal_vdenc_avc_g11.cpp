@@ -964,27 +964,16 @@ MOS_STATUS CodechalVdencAvcStateG11::ExecuteSliceLevel()
             sliceState.dwBatchBufferForPakSlicesStartOffset = batchBufferForPakSlicesStartOffset;
         }
 
-        if (m_avcRoundingParams != nullptr && m_avcRoundingParams->bEnableCustomRoudingIntra)
-        {
-            sliceState.dwRoundingIntraValue = m_avcRoundingParams->dwRoundingIntra;
-        }
-        else
-        {
-            sliceState.dwRoundingIntraValue = 5;
-        }
-        if (m_avcRoundingParams != nullptr && m_avcRoundingParams->bEnableCustomRoudingInter)
-        {
-            sliceState.bRoundingInterEnable = true;
-            sliceState.dwRoundingValue = m_avcRoundingParams->dwRoundingInter;
-        }
-        else
-        {
-            sliceState.bRoundingInterEnable = m_roundingInterEnable;
-            CODECHAL_ENCODE_CHK_STATUS_RETURN(GetInterRounding(&sliceState));
-        }
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(SetRounding(m_avcRoundingParams, &sliceState));
 
         sliceState.oneOnOneMapping = m_oneOnOneMapping;
         CODECHAL_ENCODE_CHK_STATUS_RETURN(SendSlice(&cmdBuffer, &sliceState));
+
+        // Report slice size
+        if (m_presMetadataBuffer != nullptr)
+        {
+            CODECHAL_ENCODE_CHK_STATUS_RETURN(ReportSliceSizeMetaData(m_presMetadataBuffer, &cmdBuffer, slcCount));
+        }
 
         // Add dumps for 2nd level batch buffer
         if (sliceState.bSingleTaskPhaseSupported && !sliceState.bVdencInUse)
@@ -1117,7 +1106,7 @@ MOS_STATUS CodechalVdencAvcStateG11::ExecuteSliceLevel()
 #endif
 
     // Prepare MetaData
-    if ((m_presMetadataBuffer != nullptr) && (m_currPass == m_numPasses))
+    if (m_presMetadataBuffer != nullptr)
     {
         CODECHAL_ENCODE_CHK_STATUS_RETURN(PrepareHWMetaData(m_presMetadataBuffer, &m_pakSliceSizeStreamoutBuffer, &cmdBuffer));
     }
