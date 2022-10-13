@@ -45,15 +45,13 @@
 #endif
 #include "mos_user_setting.h"
 
-#ifndef ANDROID
 #include <sys/ipc.h>  // System V IPC
 #include <sys/types.h>
 #include <sys/sem.h>
 #include <signal.h>
 #include <unistd.h>  // fork
-#else
 #include <cutils/properties.h>
-#endif
+
 #include <algorithm>
 #include <execinfo.h> // backtrace
 
