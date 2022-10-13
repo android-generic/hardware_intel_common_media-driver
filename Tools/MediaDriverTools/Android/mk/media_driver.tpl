@@ -49,6 +49,7 @@ LOCAL_CPPFLAGS := \
     -fexceptions \
     -frtti \
     -std=c++14 \
+    -Wno-pragma-pack-suspicious-include \
 @LOCAL_CFLAGS
 
 LOCAL_CONLYFLAGS = -x c++
@@ -60,7 +61,8 @@ LOCAL_C_INCLUDES  = \
 
 #LOCAL_CPP_FEATURES := rtti exceptions
 
-LOCAL_MODULE := i965_drv_video
+LOCAL_MODULE := iHD_drv_video
+LOCAL_MODULE_RELATIVE_PATH := dri
 LOCAL_PROPRIETARY_MODULE := true
 
 include $(BUILD_SHARED_LIBRARY)
