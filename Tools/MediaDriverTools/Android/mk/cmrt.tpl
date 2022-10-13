@@ -28,11 +28,7 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE := libigfxcmrt_headers
 LOCAL_EXPORT_C_INCLUDE_DIRS := \
-    $(LOCAL_PATH)/proprietary/share \
-    $(LOCAL_PATH)/agnostic/share \
-    $(LOCAL_PATH)/agnostic/hardware \
-    $(LOCAL_PATH)/linux/share \
-    $(LOCAL_PATH)/linux/hardware
+@LOCAL_C_INCLUDES
 include $(BUILD_HEADER_LIBRARY)
 
 include $(CLEAR_VARS)

@@ -33,6 +33,7 @@ LOCAL_SHARED_LIBRARIES := \
     libdrm \
     libva \
     liblog \
+    libigfxcmrt
 
 
 LOCAL_STATIC_LIBRARIES := \
