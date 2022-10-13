@@ -1421,7 +1421,7 @@ LOCAL_C_INCLUDES  = \
     $(LOCAL_PATH)/../media_softlet/linux/common/cp \
     $(LOCAL_PATH)/../media_softlet/linux/common/shared/user_setting \
 
-
+LOCAL_HEADER_LIBRARIES := libigfxcmrt_headers
 #LOCAL_CPP_FEATURES := rtti exceptions
 
 LOCAL_MODULE := iHD_drv_video

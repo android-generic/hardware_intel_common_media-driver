@@ -26,6 +26,17 @@ $(info value of CMRT_ARCH is: $(CMRT_ARCH))
 
 include $(CLEAR_VARS)
 
+LOCAL_MODULE := libigfxcmrt_headers
+LOCAL_EXPORT_C_INCLUDE_DIRS := \
+    $(LOCAL_PATH)/proprietary/share \
+    $(LOCAL_PATH)/agnostic/share \
+    $(LOCAL_PATH)/agnostic/hardware \
+    $(LOCAL_PATH)/linux/share \
+    $(LOCAL_PATH)/linux/hardware
+include $(BUILD_HEADER_LIBRARY)
+
+include $(CLEAR_VARS)
+
 LOCAL_SRC_FILES := \
     agnostic/hardware/cm_device.cpp \
     agnostic/hardware/cm_device_export.cpp \
@@ -42,13 +53,6 @@ LOCAL_SRC_FILES := \
     linux/hardware/cm_surface_manager_os.cpp \
     linux/hardware/cm_timer_os.cpp \
     linux/share/cm_performance.cpp \
-
-LOCAL_C_INCLUDES += \
-    $(LOCAL_PATH)/proprietary/share \
-    $(LOCAL_PATH)/agnostic/share \
-    $(LOCAL_PATH)/agnostic/hardware \
-    $(LOCAL_PATH)/linux/share \
-    $(LOCAL_PATH)/linux/hardware
 
 LOCAL_CFLAGS += \
     -Wno-error \
@@ -79,6 +83,7 @@ LOCAL_MODULE := libigfxcmrt
 LOCAL_PROPRIETARY_MODULE := true
 
 LOCAL_LDLIBS := -lc -lva -lva-android
+LOCAL_HEADER_LIBRARIES := libigfxcmrt_headers
 LOCAL_SHARED_LIBRARIES := libc libdl libcutils liblog libutils libm libva libva-android
 
 include $(BUILD_SHARED_LIBRARY)

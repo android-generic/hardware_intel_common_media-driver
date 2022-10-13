@@ -58,7 +58,7 @@ LOCAL_CFLAGS = $(LOCAL_CPPFLAGS)
 LOCAL_C_INCLUDES  = \
 @LOCAL_C_INCLUDES
 
-
+LOCAL_HEADER_LIBRARIES := libigfxcmrt_headers
 #LOCAL_CPP_FEATURES := rtti exceptions
 
 LOCAL_MODULE := iHD_drv_video
