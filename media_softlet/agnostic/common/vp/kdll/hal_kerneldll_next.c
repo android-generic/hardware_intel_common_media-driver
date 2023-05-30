@@ -3918,6 +3918,7 @@ bool KernelDll_BuildKernel_CmFc(Kdll_State *pState, Kdll_SearchState *pSearchSta
     VP_RENDER_FUNCTION_ENTER;
 
     // Disable pop-up box window for STL assertion to avoid VM hang in auto test.
+#ifndef ANDROID
 #if (!LINUX)
     uint32_t prevErrorMode = ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 #if defined(_MSC_VER)
@@ -3930,7 +3931,7 @@ bool KernelDll_BuildKernel_CmFc(Kdll_State *pState, Kdll_SearchState *pSearchSta
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 #endif
-
+#endif
     pSearchState->KernelLink.dwSize  = DL_MAX_SYMBOLS;
     pSearchState->KernelLink.dwCount = 0;
     pSearchState->KernelLink.pLink   = pSearchState->LinkArray;
@@ -4048,7 +4049,7 @@ bool KernelDll_BuildKernel_CmFc(Kdll_State *pState, Kdll_SearchState *pSearchSta
     res = true;
 
 finish:
-#if (!LINUX)
+#if (!LINUX) && !defined(ANDROID)
     ::SetErrorMode(prevErrorMode);
 #endif
     return res;
