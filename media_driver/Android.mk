@@ -285,6 +285,7 @@ LOCAL_SRC_FILES := \
     ../media_softlet/agnostic/common/codec/hal/enc/av1/features/encode_av1_vdenc_lpla_enc.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/av1/packet/encode_av1_brc_init_packet.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/av1/packet/encode_av1_brc_update_packet.cpp \
+    ../media_softlet/agnostic/common/codec/hal/enc/av1/packet/encode_av1_pak_integrate_packet.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/av1/packet/encode_av1_vdenc_packet.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/av1/packet/encode_back_annotation_packet.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/av1/pipeline/encode_av1_pipeline.cpp \
@@ -313,6 +314,7 @@ LOCAL_SRC_FILES := \
     ../media_softlet/agnostic/common/codec/hal/enc/avc/pipeline/encode_avc_vdenc_pipeline.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/avc/pipeline/encode_avc_vdenc_pipeline_adapter.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/features/encode_hevc_basic_feature.cpp \
+    ../media_softlet/agnostic/common/codec/hal/enc/hevc/features/encode_hevc_basic_feature_422.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/features/encode_hevc_brc.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/features/encode_hevc_cqp.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/features/encode_hevc_dss.cpp \
@@ -336,6 +338,7 @@ LOCAL_SRC_FILES := \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/features/roi/encode_hevc_vdenc_roi_strategy.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/packet/encode_hevc_tile_replay_packet.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/packet/encode_hevc_vdenc_packet.cpp \
+    ../media_softlet/agnostic/common/codec/hal/enc/hevc/packet/encode_hevc_vdenc_422_packet.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/packet/encode_huc_brc_init_packet.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/packet/encode_huc_brc_update_packet.cpp \
     ../media_softlet/agnostic/common/codec/hal/enc/hevc/packet/encode_huc_la_init_packet.cpp \
