@@ -2247,12 +2247,5 @@ cc_library_shared {
     ],
 
     rtti: true,
-    enabled: false,
-    arch: {
-        x86_64: {
-            enabled: true,
-        },
-    },
-
     vendor: true,
 }

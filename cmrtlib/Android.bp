@@ -75,12 +75,6 @@ cc_library_shared {
         "libva-android",
     ],
     vendor: true,
-    enabled: false,
-    arch: {
-        x86_64: {
-            enabled: true,
-        },
-    },
 }
 
 cc_library_headers {
@@ -90,10 +84,4 @@ cc_library_headers {
     ],
 
     vendor: true,
-    enabled: false,
-    arch: {
-        x86_64: {
-            enabled: true,
-        },
-    },
 }
